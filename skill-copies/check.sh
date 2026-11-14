@@ -12,56 +12,60 @@ set -euo pipefail
 
 readonly CLAUDE=.claude/skills
 readonly AGENTS=.agents/skills
+readonly DEFAULT_FIX="Copy each changed file to the same path in the other directory and commit both."
 
+# Prints an error annotation, with the characters GitHub reads as markup in a
+# workflow command escaped, and exits.
 fail() {
-    echo "::error title=skill copies differ::$1" >&2
+    local message="$1"
+    message=${message//'%'/'%25'}
+    message=${message//$'\r'/'%0D'}
+    message=${message//$'\n'/'%0A'}
+    echo "::error title=skill copies differ::$message" >&2
     exit 1
 }
 
-# One `mode type sha<TAB>path` line per file in a skills directory at a commit.
-listing() {
+require_tree() {
     local rev="$1" dir="$2"
     if [ "$(git cat-file -t "$rev:$dir" 2>/dev/null)" != tree ]; then
         fail "$dir is not a directory at $rev, and both skills directories must exist"
     fi
-    git -c core.quotePath=false ls-tree -r "$rev:$dir"
 }
 
 main() {
-    local rev="${1:-HEAD}" claude agents differing
+    local rev="${1:-HEAD}" raw modes shas path reason differing=0
     if ! git rev-parse --verify --quiet "$rev^{tree}" >/dev/null; then
-        fail "$rev does not resolve in this checkout"
+        fail "$rev does not resolve in this checkout; fetch it first when the checkout is shallow"
     fi
+    require_tree "$rev" "$CLAUDE"
+    require_tree "$rev" "$AGENTS"
 
-    claude=$(listing "$rev" "$CLAUDE")
-    agents=$(listing "$rev" "$AGENTS")
-    if [ "$claude" = "$agents" ]; then
+    # One `:<mode> <mode> <sha> <sha> <status><TAB><path>` line per differing file, with paths
+    # relative to each skills directory.
+    raw=$(git -c core.quotePath=false diff-tree -r --no-renames --raw --no-abbrev \
+        "$rev:$CLAUDE" "$rev:$AGENTS")
+    if [ -z "$raw" ]; then
         echo "$AGENTS matches $CLAUDE at $rev"
         return
     fi
 
-    differing=$(awk -F '\t' -v claude="$CLAUDE" -v agents="$AGENTS" '
-        FILENAME == ARGV[1] { c[$2] = $1; paths[$2] = 1; next }
-        { a[$2] = $1; paths[$2] = 1 }
-        END {
-            for (p in paths) {
-                if (!(p in a)) { print p "\tonly in " claude; continue }
-                if (!(p in c)) { print p "\tonly in " agents; continue }
-                if (c[p] == a[p]) continue
-                split(c[p], cf, " "); split(a[p], af, " ")
-                reason = ""
-                if (cf[3] != af[3]) reason = "contents differ"
-                if (cf[1] != af[1]) reason = reason (reason == "" ? "" : ", ") "file mode differs"
-                print p "\t" reason
-            }
-        }' <(echo "$claude") <(echo "$agents") | LC_ALL=C sort)
-
     echo "$AGENTS differs from $CLAUDE at $rev:" >&2
-    while IFS=$'\t' read -r path reason; do
+    while IFS=$'\t' read -r modes path; do
+        read -r -a shas <<<"$modes"
+        case "${shas[4]}" in
+            A) reason="only in $AGENTS" ;;
+            D) reason="only in $CLAUDE" ;;
+            *)
+                reason=""
+                [ "${shas[2]}" != "${shas[3]}" ] && reason="contents differ"
+                [ "${shas[0]#:}" != "${shas[1]}" ] && reason="${reason:+$reason, }file mode differs"
+                ;;
+        esac
         echo "  $path: $reason" >&2
-    done <<<"$differing"
-    echo "${FIX:-Copy each changed file to the other directory and commit both.}" >&2
-    fail "$AGENTS differs from $CLAUDE in $(wc -l <<<"$differing" | tr -d ' ') file(s); see the log for the list"
+        differing=$((differing + 1))
+    done <<<"$raw"
+    echo "${FIX:-$DEFAULT_FIX}" >&2
+    fail "$AGENTS differs from $CLAUDE in $differing file(s); the log lists them"
 }
 
 main "$@"

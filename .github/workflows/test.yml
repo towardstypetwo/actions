@@ -35,3 +35,44 @@ jobs:
         run: |
           gh extension install github/gh-actions-lock --pin v0.4.1
           gh actions-lock --verify
+
+  # Runs the action itself, not just check.sh, on a repository whose copies
+  # match and on one whose copies don't.
+  skill-copies-action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make a repository with matching copies
+        run: |
+          git init -q "$RUNNER_TEMP/fixture"
+          cd "$RUNNER_TEMP/fixture"
+          for dir in .claude/skills .agents/skills; do
+            mkdir -p "$dir/demo"
+            echo "# demo" >"$dir/demo/SKILL.md"
+          done
+          git add -A
+          git -c user.email=ci@example.com -c user.name=ci commit -q -m base
+      - id: matching
+        uses: ./skill-copies
+        with:
+          path: ${{ runner.temp }}/fixture
+      - name: Make one copy differ
+        run: |
+          cd "$RUNNER_TEMP/fixture"
+          echo "# changed" >.claude/skills/demo/SKILL.md
+          git -c user.email=ci@example.com -c user.name=ci commit -q -am change
+      - id: differing
+        continue-on-error: true
+        uses: ./skill-copies
+        with:
+          path: ${{ runner.temp }}/fixture
+          fix: Run the fixer.
+      - name: Check the outcomes
+        env:
+          MATCHING: ${{ steps.matching.outcome }}
+          DIFFERING: ${{ steps.differing.outcome }}
+        run: |
+          [ "$MATCHING" = success ] && [ "$DIFFERING" = failure ]

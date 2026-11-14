@@ -41,7 +41,7 @@ Exceptions go in `package.json`, and a failing step prints the entry to add:
 
 ## skill-copies
 
-Fails when `.agents/skills` differs from `.claude/skills` in any file's path, contents or mode, and lists the files that differ. It reads the checked-out commit, so `actions/checkout` runs first.
+Fails when `.agents/skills` differs from `.claude/skills` in any file's path, contents or mode, and lists the files that differ. It reads the checked-out commit, so `actions/checkout` runs first; the `rev` input compares another commit, which must already be fetched.
 
 ```yaml
 - uses: actions/checkout@v7.0.1

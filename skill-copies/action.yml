@@ -6,14 +6,17 @@ inputs:
   rev:
     description: >-
       Commit to compare the two directories at. The default, HEAD, is the
-      checked-out commit.
+      checked-out commit. Any other commit must already be fetched.
     default: HEAD
   fix:
-    description: Text printed after the differing files, saying how to fix them.
-    default: >-
-      Copy each changed file to the same path in the other directory and commit
-      both. Where the skill-copies skill is installed, its scripts/fix.sh does
-      this for staged changes.
+    description: >-
+      Text printed after the differing files, saying how to fix them. The
+      default tells the reader to copy each changed file to the other
+      directory.
+    default: ''
+  path:
+    description: Directory of the git repository to check.
+    default: .
 runs:
   using: composite
   steps:
@@ -22,4 +25,5 @@ runs:
       env:
         REV: ${{ inputs.rev }}
         FIX: ${{ inputs.fix }}
+      working-directory: ${{ inputs.path }}
       run: bash "$GITHUB_ACTION_PATH/check.sh" "$REV"

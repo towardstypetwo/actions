@@ -38,7 +38,7 @@ expect() {
     local name="$1" want="$2" repo="$3" out status=0
     shift 3
     out=$(cd "$repo" && bash "$check" ${REV:+"$REV"} 2>&1) || status=$?
-    if [ "$want" = pass ] && [ "$status" -ne 0 ] || [ "$want" = fail ] && [ "$status" -eq 0 ]; then
+    if { [ "$want" = pass ] && [ "$status" -ne 0 ]; } || { [ "$want" = fail ] && [ "$status" -eq 0 ]; }; then
         echo "FAIL $name: expected $want, exit status $status"
         echo "$out"
         failed=$((failed + 1))
@@ -127,6 +127,19 @@ if [[ $out == *"Run the fixer."* ]]; then
     passed=$((passed + 1))
 else
     echo "FAIL the fix text is printed"
+    failed=$((failed + 1))
+fi
+
+repo=$(new_repo)
+echo "# changed" >"$repo/.claude/skills/demo/SKILL.md"
+commit "$repo"
+out=$(cd "$repo" && bash "$check" 'x%y' 2>&1) || true
+if [[ $out == *"x%25y does not resolve"* ]]; then
+    echo "ok   percent signs in the message are escaped"
+    passed=$((passed + 1))
+else
+    echo "FAIL percent signs in the message are escaped"
+    echo "$out"
     failed=$((failed + 1))
 fi
 
