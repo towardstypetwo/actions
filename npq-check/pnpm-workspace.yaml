@@ -1,0 +1,16 @@
+# Install policy for the npq this action installs. pnpm fails on an unknown
+# top-level key here, so a misspelled setting fails the install.
+
+# Install no release until it has been public for 7 days (minutes).
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+
+# Fail on a release with weaker publishing evidence than an earlier one.
+trustPolicy: no-downgrade
+
+# No install scripts run (the action also passes --ignore-scripts), and an
+# unlisted one fails the install.
+strictDepBuilds: true
+blockExoticSubdeps: true
+trustLockfile: false
+dangerouslyAllowAllBuilds: false

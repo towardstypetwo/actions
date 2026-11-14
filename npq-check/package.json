@@ -1,0 +1,8 @@
+{
+  "name": "npq-check",
+  "private": true,
+  "description": "The npq that npq-check runs, installed from this lockfile by the action.",
+  "dependencies": {
+    "npq": "3.27.3"
+  }
+}

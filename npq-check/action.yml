@@ -1,0 +1,26 @@
+name: npq check
+description: >-
+  Run npq on the direct dependencies a pull request adds or changes, at the
+  versions pnpm-lock.yaml resolves, and fail on npq errors that package.json's
+  npq.allow doesn't list.
+inputs:
+  base:
+    description: >-
+      Commit to compare the lockfile with. The default, HEAD^1, is the base
+      branch when the checkout is a pull request's merge commit, which needs
+      fetch-depth: 2.
+    default: HEAD^1
+runs:
+  using: composite
+  steps:
+    # npq comes from this action's lockfile and install policy, not the
+    # checked repo's install, which the dependencies under review could change.
+    - name: Install npq
+      shell: bash
+      run: pnpm install --dir "$GITHUB_ACTION_PATH" --frozen-lockfile --ignore-scripts
+    - name: Check new and changed dependencies with npq
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: node "$GITHUB_ACTION_PATH/check.mjs" --base "$BASE"

@@ -1,0 +1,28 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 12.18.0
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      # The same install the action runs, so a lockfile or policy problem
+      # fails here before a release.
+      - run: pnpm install --dir npq-check --frozen-lockfile --ignore-scripts
+      - run: node --test npq-check/check.test.mjs
