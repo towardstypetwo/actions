@@ -6,7 +6,7 @@ Composite GitHub Actions for towardstypetwo repos. The repo is private; its Acti
 
 Runs [npq](https://github.com/lirantal/npq) in its audit-only `--json` mode on each direct dependency a pull request adds or changes, at the version `pnpm-lock.yaml` resolves, by comparing the lockfile with the base commit's. npq errors fail the step; warnings show as annotations on `package.json`.
 
-The action installs npq itself, from `npq-check/package.json` and its lockfile under the install policy in `npq-check/pnpm-workspace.yaml`, so the checked repo needs no npq of its own. It needs a single-project pnpm repo, pnpm and Node 24 on the runner, and a checkout with `fetch-depth: 2` so the base commit is there.
+The action installs npq itself, from `npq-check/package.json` and its lockfile under the install policy in `npq-check/pnpm-workspace.yaml`, so the checked repo doesn't need its own npq. It needs a single-project pnpm repo, pnpm and Node 24 on the runner, and a checkout with `fetch-depth: 2` so the base commit is there.
 
 ```yaml
 - uses: actions/checkout@v7.0.1
@@ -23,7 +23,7 @@ The action installs npq itself, from `npq-check/package.json` and its lockfile u
 - run: pnpm install --frozen-lockfile
 ```
 
-Run it before the repo's own `pnpm install`: it reads only the lockfile and pnpm's config, and running first keeps the dependencies under review from running any code before they are checked. On `pull_request`, checkout gives the merge of the PR into its base, so the default `base` input, `HEAD^1`, is the base branch; the step fails when HEAD isn't a merge commit. Put it in the job that is already a required status check.
+Run it before the repo's own `pnpm install`: it reads the lockfile and pnpm's config, so the dependencies under review haven't run any code yet. npq gets the job's token for its GitHub API calls; the pnpm commands the step runs don't. On `pull_request`, checkout gives the merge of the PR into its base, so the default `base` input, `HEAD^1`, is the base branch; the step fails when HEAD isn't a merge commit. Put it in the job that is already a required status check.
 
 ### Exceptions
 
@@ -61,7 +61,9 @@ A false positive gets an entry in the `allow` list under `npq` in `package.json`
 - Transitive dependencies, including ones a PR adds through `overrides` or `packageExtensions`.
 - Some npq checks pass quietly when their service is down: an OSV outage reads as no vulnerabilities, so `pnpm audit` stays the vulnerability gate.
 - npq's `author` check errors on a version 7 days old or younger, rounded to whole days, so a version just past pnpm's 7-day wait can fail it for a few hours. Re-run the job the next day.
-- The check names it accepts are those of the npq in `npq-check/package.json`; review `CHECKS` in `check.mjs` when that npq changes.
+- The check names it accepts are those of the npq in `npq-check/package.json`; review `CHECKS` in `check.mjs` when that npq changes. A test fails when npq changes the messages `check.mjs` matches.
+- pnpm config dependencies (`configDependencies`) and pnpmfiles: `pnpm list` installs and runs them before npq sees anything, and npq doesn't check them. Settings a pnpmfile's `updateConfig` changes aren't seen when deciding whether pnpm skips a package's builds.
+- A first adoption, where the base has no lockfile, sends every direct dependency to npq, which may pass the step's 6-minute limit on a large repo.
 
 ## Development
 

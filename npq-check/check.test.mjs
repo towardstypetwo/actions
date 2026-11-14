@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -17,6 +18,7 @@ import {
   changedDeps,
   directDeps,
   evaluate,
+  main,
   manifestLine,
   parseAllow,
   registryTarball,
@@ -103,6 +105,7 @@ test("parseAllow rejects malformed entries", () => {
     { ...base, check: "typosquat" },
     { ...base, check: "typosquatting", date: "2026-02-30" },
     { ...base, check: "typosquatting", reason: " " },
+    { ...base, check: "typosquatting", reason: "<why it doesn't apply>" },
     { ...base, check: "typosquatting", note: "x" },
     { check: "typosquatting", reason: "r", date: "2026-11-14" },
     "a typosquatting",
@@ -233,23 +236,27 @@ test("evaluate passes install scripts only when pnpm skips the package's builds"
   );
 });
 
-test("buildsSkipped lets permissions, then an exact-version key, decide", () => {
+test("buildsSkipped follows pnpm: any covering denial wins", () => {
   const d = { name: "esbuild", version: "0.28.2" };
-  assert.equal(buildsSkipped(d, { esbuild: false }), true);
-  assert.equal(
-    buildsSkipped(d, { esbuild: false, "esbuild@0.28.2": true }),
-    false,
-  );
-  assert.equal(
-    buildsSkipped(d, { esbuild: true, "esbuild@0.28.2": false }),
-    true,
-  );
-  assert.equal(
-    buildsSkipped(d, { esbuild: false }, { esbuild: { build: true } }),
-    false,
-  );
-  assert.equal(buildsSkipped(d, {}, { esbuild: { build: false } }), true);
-  assert.equal(buildsSkipped(d, null, null), false);
+  const cases = [
+    [{ esbuild: false }, {}, true],
+    [{ esbuild: false, "esbuild@0.28.2": true }, {}, true],
+    [{ esbuild: true, "esbuild@0.28.2": false }, {}, true],
+    [{ "esbuild@0.28.1 || 0.28.2": false }, {}, true],
+    [{ "esbuild@0.28.1": false }, {}, false],
+    [{ esbuild: true }, {}, false],
+    [{}, { esbuild: { build: false } }, true],
+    [{}, { "esbuild@0.28.2": { build: false } }, true],
+    [{}, { esbuild: { build: true } }, false],
+    [null, null, false],
+  ];
+  for (const [allowBuilds, permissions, skipped] of cases) {
+    assert.equal(
+      buildsSkipped(d, allowBuilds, permissions),
+      skipped,
+      JSON.stringify([allowBuilds, permissions]),
+    );
+  }
 });
 
 test("evaluate reads only npq's own prefixes, not text a publisher wrote", () => {
@@ -382,12 +389,16 @@ test("runNpq accepts a findings report and hides MARSHALL_ variables from npq", 
   process.env.MARSHALL_DISABLE_TYPOSQUATTING = "1";
   const bin = fakeNpq(`
     const disabled = Object.keys(process.env).filter((k) => k.startsWith("MARSHALL_"));
-    console.log(JSON.stringify({ schemaVersion: 1, status: "findings", failures: [], packages: [{ requested: process.argv[3], findings: [{ severity: "error", marshall: "env", message: disabled.join(",") }] }] }));
+    console.log(JSON.stringify({ schemaVersion: 1, status: "findings", failures: [], packages: [{ requested: process.argv[4], registry: process.argv[3], token: process.env.GITHUB_TOKEN ?? null, findings: [{ severity: "error", marshall: "env", message: disabled.join(",") }] }] }));
     process.exitCode = 1;
   `);
   try {
     const result = runNpq(bin, ["a@1.0.0"]);
     assert.equal(result.packages[0].requested, "a@1.0.0");
+    assert.equal(
+      result.packages[0].registry,
+      "--registry=https://registry.npmjs.org/",
+    );
     assert.equal(result.packages[0].findings[0].message, "");
   } finally {
     delete process.env.MARSHALL_DISABLE_TYPOSQUATTING;
@@ -409,7 +420,7 @@ test("runNpq fails on another report schema", () => {
   assert.throws(() => runNpq(bin, ["a@1.0.0"]), /schemaVersion 2/);
 });
 
-test("runNpq fails when npq prints no report", () => {
+test("runNpq fails when npq doesn't print a report", () => {
   const bin = fakeNpq(`console.error("boom"); process.exitCode = 1;`);
   assert.throws(() => runNpq(bin, ["a@1.0.0"]), /didn't print a JSON report/);
 });
@@ -481,22 +492,33 @@ test("check.mjs fails an unlisted lookalike and passes it once allowed", {
   project(dir, { ms: "2.1.3" });
   sh(dir, "git", ["add", "."]);
   sh(dir, "git", ["commit", "-qm", "base"]);
+  const baseSha = sh(dir, "git", ["rev-parse", "HEAD"]).trim();
   const npq = fakeNpq(`
     const findings = { "sv@1.3.0": [{ severity: "error", marshall: "typosquatting", message: "Potential typosquatting with popular package(s): ms" }] };
-    const specs = process.argv.slice(3);
+    const specs = process.argv.slice(4);
     console.log(JSON.stringify({ schemaVersion: 1, status: "findings", failures: [], packages: specs.map((s) => ({ requested: s, findings: findings[s] ?? [] })) }));
     process.exitCode = 1;
   `);
-  const run = (base) =>
-    spawnSync(process.execPath, [join(here, "check.mjs"), "--base", base], {
-      cwd: dir,
-      encoding: "utf8",
-      env: { ...process.env, NPQ_CHECK_NPQ_BIN: npq },
-    });
+  const run = (base) => {
+    const cwd = process.cwd();
+    const log = console.log;
+    let stdout = "";
+    console.log = (line) => {
+      stdout += `${line}\n`;
+    };
+    try {
+      process.chdir(dir);
+      const status = main(["--base", base], { npqBin: npq });
+      return { status, stdout, stderr: "" };
+    } finally {
+      console.log = log;
+      process.chdir(cwd);
+    }
+  };
 
   project(dir, { ms: "2.1.3", sv: "1.3.0" });
   sh(dir, "git", ["commit", "-qam", "add sv"]);
-  let result = run("HEAD~1");
+  let result = run(baseSha);
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(
     result.stdout,
@@ -519,7 +541,7 @@ test("check.mjs fails an unlisted lookalike and passes it once allowed", {
     },
   );
   sh(dir, "git", ["commit", "-qam", "allow sv"]);
-  result = run("HEAD~2");
+  result = run(baseSha);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /allowed by npq\.allow\[0\]/);
 });
@@ -535,14 +557,40 @@ test("check.mjs refuses HEAD^1 when HEAD isn't a merge commit", {
   sh(dir, "git", ["add", "."]);
   sh(dir, "git", ["commit", "-qm", "one"]);
   sh(dir, "git", ["commit", "-q", "--allow-empty", "-m", "two"]);
-  const result = spawnSync(
-    process.execPath,
-    [join(here, "check.mjs"), "--base", "HEAD^1"],
-    {
-      cwd: dir,
-      encoding: "utf8",
-    },
-  );
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /not a merge commit/);
+  for (const base of ["HEAD^1", "HEAD~1", "HEAD^"]) {
+    const result = spawnSync(
+      process.execPath,
+      [join(here, "check.mjs"), "--base", base],
+      { cwd: dir, encoding: "utf8" },
+    );
+    assert.equal(result.status, 1, base);
+    assert.match(result.stdout, /not a merge commit/);
+  }
+});
+
+test("the messages check.mjs matches are the installed npq's", (t) => {
+  const lib = join(here, "node_modules/npq/lib");
+  let source = "";
+  try {
+    for (const file of [
+      "marshalls/snyk.marshall.js",
+      "marshalls/license.marshall.js",
+      "helpers/packageRepoUtils.js",
+    ]) {
+      source += readFileSync(join(lib, file), "utf8");
+    }
+  } catch {
+    t.skip("npq is not installed here; test.yml installs it");
+    return;
+  }
+  for (const text of [
+    "Malicious package found: ",
+    "Package flagged for security issues and served as place-holder",
+    "Unable to query vulnerabilities for packages",
+    "Snyk API request failed with status ",
+    "GitHub API rate limit exceeded - deprecation marshall could not evaluate ",
+    "deprecation marshall could not evaluate repository archive status",
+  ]) {
+    assert.ok(source.includes(text), `npq no longer says: ${text}`);
+  }
 });

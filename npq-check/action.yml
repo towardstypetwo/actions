@@ -22,5 +22,5 @@ runs:
       shell: bash
       env:
         BASE: ${{ inputs.base }}
-        GITHUB_TOKEN: ${{ github.token }}
+        NPQ_CHECK_GITHUB_TOKEN: ${{ github.token }}
       run: node "$GITHUB_ACTION_PATH/check.mjs" --base "$BASE"
