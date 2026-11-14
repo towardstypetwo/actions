@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for check.sh: run `bash skill-copies/check.test.sh`.
+# Tests for check.sh: run `bash skills-aligned/check.test.sh`.
 
 set -euo pipefail
 

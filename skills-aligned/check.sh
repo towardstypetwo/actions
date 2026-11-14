@@ -29,7 +29,7 @@ fail() {
     message=${message//'%'/'%25'}
     message=${message//$'\r'/'%0D'}
     message=${message//$'\n'/'%0A'}
-    echo "::error title=skill copies differ::$message" >&2
+    echo "::error title=skills not aligned::$message" >&2
     exit 1
 }
 

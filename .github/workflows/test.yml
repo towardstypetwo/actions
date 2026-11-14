@@ -26,7 +26,7 @@ jobs:
       # fails here before a release.
       - run: pnpm install --dir npq-check --frozen-lockfile --ignore-scripts
       - run: node --test npq-check/check.test.mjs
-      - run: bash skill-copies/check.test.sh
+      - run: bash skills-aligned/check.test.sh
       # Fails when actions.lock is out of sync with this workflow or a locked
       # commit no longer verifies upstream.
       - name: Verify actions.lock
@@ -38,7 +38,7 @@ jobs:
 
   # Runs the action itself, not just check.sh, on a repository whose copies
   # match and on one whose copies don't.
-  skill-copies-action:
+  skills-aligned-action:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -56,7 +56,7 @@ jobs:
           git add -A
           git -c user.email=ci@example.com -c user.name=ci commit -q -m base
       - id: matching
-        uses: ./skill-copies
+        uses: ./skills-aligned
         with:
           path: ${{ runner.temp }}/fixture
       - name: Make one copy differ
@@ -66,7 +66,7 @@ jobs:
           git -c user.email=ci@example.com -c user.name=ci commit -q -am change
       - id: differing
         continue-on-error: true
-        uses: ./skill-copies
+        uses: ./skills-aligned
         with:
           path: ${{ runner.temp }}/fixture
           fix: Run the fixer.
