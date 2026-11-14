@@ -1,0 +1,25 @@
+name: skill copies
+description: >-
+  Fail when .agents/skills differs from .claude/skills, comparing every file's
+  path, contents and mode, and print the files that differ.
+inputs:
+  rev:
+    description: >-
+      Commit to compare the two directories at. The default, HEAD, is the
+      checked-out commit.
+    default: HEAD
+  fix:
+    description: Text printed after the differing files, saying how to fix them.
+    default: >-
+      Copy each changed file to the same path in the other directory and commit
+      both. Where the skill-copies skill is installed, its scripts/fix.sh does
+      this for staged changes.
+runs:
+  using: composite
+  steps:
+    - name: Compare .claude/skills with .agents/skills
+      shell: bash
+      env:
+        REV: ${{ inputs.rev }}
+        FIX: ${{ inputs.fix }}
+      run: bash "$GITHUB_ACTION_PATH/check.sh" "$REV"

@@ -26,6 +26,7 @@ jobs:
       # fails here before a release.
       - run: pnpm install --dir npq-check --frozen-lockfile --ignore-scripts
       - run: node --test npq-check/check.test.mjs
+      - run: bash skill-copies/check.test.sh
       # Fails when actions.lock is out of sync with this workflow or a locked
       # commit no longer verifies upstream.
       - name: Verify actions.lock

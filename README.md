@@ -39,10 +39,21 @@ Exceptions go in `package.json`, and a failing step prints the entry to add:
 - Malicious-package findings, npm's security placeholder, checks npq couldn't finish, and dependencies that don't come from registry.npmjs.org can't be allowed.
 - Transitive dependencies aren't checked.
 
+## skill-copies
+
+Fails when `.agents/skills` differs from `.claude/skills` in any file's path, contents or mode, and lists the files that differ. It reads the checked-out commit, so `actions/checkout` runs first.
+
+```yaml
+- uses: actions/checkout@v7.0.1
+  with:
+    persist-credentials: false
+- uses: towardstypetwo/actions/skill-copies@v1
+```
+
 ## Versions
 
 Releases are tagged `vX.Y.Z` on main, and `vN` points at the latest release of each major version.
 
 ## Development
 
-Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`.
+Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`. Test skill-copies with `bash skill-copies/check.test.sh`.
