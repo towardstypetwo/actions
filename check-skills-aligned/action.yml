@@ -1,4 +1,4 @@
-name: skills aligned
+name: check skills aligned
 description: >-
   Fail when .agents/skills differs from .claude/skills, comparing every file's
   path, contents and mode, and print the files that differ with the commands
