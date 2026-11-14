@@ -1,12 +1,10 @@
 # actions
 
-Composite GitHub Actions for towardstypetwo repos. The repo is private; its Actions access setting lets repositories in the towardstypetwo organization use its actions. Consumers name an action by its full version tag and pin it in their `actions.lock`.
+Composite GitHub Actions used by Towards Type Two's repositories.
 
 ## npq-check
 
-Runs [npq](https://github.com/lirantal/npq) in its audit-only `--json` mode on each direct dependency a pull request adds or changes, at the version `pnpm-lock.yaml` resolves, by comparing the lockfile with the base commit's. npq errors fail the step; warnings show as annotations on `package.json`.
-
-The action installs npq itself, from `npq-check/package.json` and its lockfile under the install policy in `npq-check/pnpm-workspace.yaml`, so the checked repo doesn't need its own npq. It needs a single-project pnpm repo, pnpm and Node 24 on the runner, and a checkout with `fetch-depth: 2` so the base commit is there.
+Runs [npq](https://github.com/lirantal/npq) in its audit-only `--json` mode on each direct dependency a pull request adds or changes, at the version `pnpm-lock.yaml` resolves. npq errors fail the step unless `package.json` lists an exception; warnings show as annotations. The action installs its own pinned npq.
 
 ```yaml
 - uses: actions/checkout@v7.0.1
@@ -19,52 +17,32 @@ The action installs npq itself, from `npq-check/package.json` and its lockfile u
     node-version: 24
 - name: Check new and changed dependencies with npq
   if: github.event_name == 'pull_request'
-  uses: towardstypetwo/actions/npq-check@v1.0.0
+  uses: towardstypetwo/actions/npq-check@v1
 - run: pnpm install --frozen-lockfile
 ```
 
-Run it before the repo's own `pnpm install`: it reads the lockfile and pnpm's config, so the dependencies under review haven't run any code yet. npq gets the job's token for its GitHub API calls; the pnpm commands the step runs don't. On `pull_request`, checkout gives the merge of the PR into its base, so the default `base` input, `HEAD^1`, is the base branch; the step fails when HEAD isn't a merge commit. Put it in the job that is already a required status check.
+Run it before `pnpm install`. It compares the lockfile with `HEAD^1`, the base branch on a pull request's merge commit, which is what actions/checkout checks out; the `base` input sets another commit.
 
-### Exceptions
-
-A false positive gets an entry in the `allow` list under `npq` in `package.json`, in the same PR:
+Exceptions go in `package.json`, and a failing step prints the entry to add:
 
 ```json
 "npq": {
   "allow": [
-    {
-      "package": "sv",
-      "check": "typosquatting",
-      "reason": "the official Svelte CLI, built from sveltejs/cli with npm trusted publishing",
-      "date": "2026-11-14"
-    },
-    {
-      "package": "some-package",
-      "version": "1.2.3",
-      "check": "author",
-      "reason": "first release by a maintainer listed in the project's repository",
-      "date": "2026-11-14"
-    }
+    { "package": "sv", "check": "typosquatting", "reason": "the official Svelte CLI, built from sveltejs/cli", "date": "2026-11-14" },
+    { "package": "some-package", "version": "1.2.3", "check": "author", "reason": "a maintainer listed in the project's repository", "date": "2026-11-14" }
   ]
 }
 ```
 
-- `check` is npq's name for the check, as the error prints it.
-- A `typosquatting` exception is about the name, so it doesn't take a `version` and holds for every version. Every other check needs the exact `version` it was reviewed at, so an upgrade needs a new entry.
-- An install-scripts (`scripts`) finding passes without an entry when pnpm's config skips the package's builds (`allowBuilds` sets it, or `name@version`, to false, or `permissions.<name>.build` is false, which wins), since pnpm then never runs the script.
-- `reason` says why the finding doesn't apply, as a fact a reviewer can check. `date` is the day the entry was added.
-- These can't be allowed: "Malicious package found", npm's security placeholder, a check npq couldn't finish (a rate limit or an outage), which needs a re-run, and a dependency that doesn't resolve to its own tarball on registry.npmjs.org (git, a tarball URL, `link:`), which npq can't check.
-- The step prints a notice for an entry whose package or version is no longer a direct dependency.
+- `check` is the npq check's name. A `typosquatting` exception covers every version of the package; other checks need the exact `version`.
+- An install-scripts finding passes when pnpm's `allowBuilds` or `permissions` turns that package's build off.
+- Malicious-package findings, npm's security placeholder, checks npq couldn't finish, and dependencies that don't come from registry.npmjs.org can't be allowed.
+- Transitive dependencies aren't checked.
 
-### What it doesn't cover
+## Versions
 
-- Transitive dependencies, including ones a PR adds through `overrides` or `packageExtensions`.
-- Some npq checks pass quietly when their service is down: an OSV outage reads as no vulnerabilities, so `pnpm audit` stays the vulnerability gate.
-- npq's `author` check errors on a version 7 days old or younger, rounded to whole days, so a version just past pnpm's 7-day wait can fail it for a few hours. Re-run the job the next day.
-- The check names it accepts are those of the npq in `npq-check/package.json`; review `CHECKS` in `check.mjs` when that npq changes. A test fails when npq changes the messages `check.mjs` matches.
-- pnpm config dependencies (`configDependencies`) and pnpmfiles: `pnpm list` installs and runs them before npq sees anything, and npq doesn't check them. Settings a pnpmfile's `updateConfig` changes aren't seen when deciding whether pnpm skips a package's builds.
-- A first adoption, where the base has no lockfile, sends every direct dependency to npq, which may pass the step's 6-minute limit on a large repo.
+Releases are tagged `vX.Y.Z` on main, and `vN` points at the latest release of each major version.
 
 ## Development
 
-Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`; `test.yml` runs both on every PR. Release by tagging `vX.Y.Z` on main, then move each consumer's `uses:` line to it and run `gh actions-lock` there. Dependabot can't propose these bumps unless the organization lets it read private repositories.
+Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`.
