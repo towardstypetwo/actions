@@ -20,11 +20,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // npq comes from this action's own lockfile, never the checked repo's
-// install, which the dependencies under review could have changed. The
-// variable is for tests.
-const NPQ_BIN =
-  process.env.NPQ_CHECK_NPQ_BIN ??
-  join(dirname(fileURLToPath(import.meta.url)), "node_modules/.bin/npq");
+// install, which the dependencies under review could have changed.
+const NPQ_BIN = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "node_modules/.bin/npq",
+);
+// The token npq's GitHub API calls use. action.yml passes it under this name,
+// so the pnpm commands this script runs (and any pnpmfile they load) don't
+// see it; only npq gets it, as GITHUB_TOKEN.
+const TOKEN_VAR = "NPQ_CHECK_GITHUB_TOKEN";
+const PLACEHOLDER_REASON = "<why it doesn't apply>";
 
 const MANIFEST = "package.json";
 // Checks about the name alone, so their exceptions hold for every version.
@@ -118,7 +123,11 @@ export function parseAllow(manifest) {
       fail(`${check} needs the exact version it was reviewed at`);
       return;
     }
-    if (typeof reason !== "string" || reason.trim() === "") {
+    if (
+      typeof reason !== "string" ||
+      reason.trim() === "" ||
+      reason.includes(PLACEHOLDER_REASON)
+    ) {
       fail("reason must say why the finding doesn't apply");
       return;
     }
@@ -177,11 +186,19 @@ export function changedDeps(base, head) {
   });
 }
 
+// The environment for pnpm: without the token, which only npq needs.
+function pnpmEnv() {
+  const env = { ...process.env };
+  delete env[TOKEN_VAR];
+  delete env.GITHUB_TOKEN;
+  return env;
+}
+
 function pnpmList(cwd) {
   const result = spawnSync(
     "pnpm",
     ["list", "--lockfile-only", "--json", "--depth", "0"],
-    { cwd, encoding: "utf8", maxBuffer: MAX_BUFFER },
+    { cwd, encoding: "utf8", maxBuffer: MAX_BUFFER, env: pnpmEnv() },
   );
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -241,12 +258,18 @@ export function baseDeps(rev) {
 // not check every package.
 export function runNpq(npqBin, specs) {
   const env = { ...process.env };
-  // Each MARSHALL_DISABLE_<CHECK> variable turns an npq check off; exceptions
+  // Each MARSHALL_DISABLE_<CHECK> variable turns an npq check off, and the
+  // SNYK_ variables point its vulnerability check elsewhere; exceptions
   // belong in package.json, where review sees them.
   for (const key of Object.keys(env)) {
-    if (key.startsWith("MARSHALL_")) delete env[key];
+    if (/^(MARSHALL_|SNYK_|NODE_OPTIONS$)/.test(key)) delete env[key];
   }
-  const result = spawnSync(npqBin, ["--json", ...specs], {
+  delete env[TOKEN_VAR];
+  if (process.env[TOKEN_VAR]) env.GITHUB_TOKEN = process.env[TOKEN_VAR];
+  // The registry pnpm's `resolved` was checked against, whatever npm config
+  // the repo or runner sets.
+  const args = ["--json", `--registry=${REGISTRY}`, ...specs];
+  const result = spawnSync(npqBin, args, {
     encoding: "utf8",
     env,
     maxBuffer: MAX_BUFFER,
@@ -309,15 +332,27 @@ function allowable(check, message) {
   );
 }
 
-// Whether pnpm skips `dep`'s install scripts: `permissions.<name>.build`
-// decides when set, then an `allowBuilds` key for the exact version, then
-// one for the name.
+// Whether a config key (`name`, `name@1.0.0` or `name@1.0.0 || 1.0.1`)
+// covers `dep`.
+function keyCovers(key, dep) {
+  const at = key.lastIndexOf("@");
+  if (at <= 0) return key === dep.name;
+  if (key.slice(0, at) !== dep.name) return false;
+  return key
+    .slice(at + 1)
+    .split("||")
+    .some((v) => v.trim() === dep.version);
+}
+
+// Whether pnpm skips `dep`'s install scripts. pnpm denies a build when any
+// `allowBuilds` key or `permissions.<key>.build` covering the package says
+// false, whatever else allows it.
 export function buildsSkipped(dep, allowBuilds = {}, permissions = {}) {
-  const build = permissions?.[dep.name]?.build;
-  if (typeof build === "boolean") return build === false;
-  const exact = allowBuilds?.[`${dep.name}@${dep.version}`];
-  if (typeof exact === "boolean") return exact === false;
-  return allowBuilds?.[dep.name] === false;
+  const denied = (map, read) =>
+    Object.entries(map ?? {}).some(
+      ([key, value]) => keyCovers(key, dep) && read(value) === false,
+    );
+  return denied(allowBuilds, (v) => v) || denied(permissions, (v) => v?.build);
 }
 
 // Sorts npq's findings into errors (failing), allowed errors and warnings.
@@ -438,6 +473,7 @@ function pnpmConfigMap(key) {
   const result = spawnSync("pnpm", ["config", "get", key, "--json"], {
     encoding: "utf8",
     maxBuffer: MAX_BUFFER,
+    env: pnpmEnv(),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -456,7 +492,7 @@ export function suggestion(dep, check, today) {
   return JSON.stringify({
     ...entry,
     check,
-    reason: "<why it doesn't apply>",
+    reason: PLACEHOLDER_REASON,
     date: today,
   });
 }
@@ -467,19 +503,19 @@ function logLine(text) {
   console.log(String(text).replace(/[\r\n]+/g, " "));
 }
 
-function main(argv) {
+export function main(argv, { npqBin = NPQ_BIN } = {}) {
   const baseIndex = argv.indexOf("--base");
   const base = baseIndex === -1 ? undefined : argv[baseIndex + 1];
   if (!base) {
     console.error("usage: check.mjs --base <git rev>");
     return 2;
   }
-  // HEAD^1 is the base branch only on a pull request's merge commit; on any
-  // other checkout it would skip the PR's earlier commits.
-  if (
-    base === "HEAD^1" &&
-    git(["rev-parse", "--verify", "--quiet", "HEAD^2"]).status
-  ) {
+  // HEAD's first parent is the base branch only on a pull request's merge
+  // commit; on any other checkout it would skip the PR's earlier commits. A
+  // base given as a commit hash is taken as meant.
+  const commit = (rev) =>
+    git(["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]).stdout.trim();
+  if (/^HEAD(\^1?|~1?)$/.test(base) && !commit("HEAD^2")) {
     throw new Error(
       "HEAD is not a merge commit, so HEAD^1 is not the base branch; check out the pull request's merge ref (actions/checkout's default) or pass base",
     );
@@ -524,7 +560,7 @@ function main(argv) {
       `npq: checking ${toCheck.map((d) => `${d.name}@${d.version}`).join(", ")}`,
     );
     const report = runNpq(
-      NPQ_BIN,
+      npqBin,
       toCheck.map((d) => `${d.name}@${d.version}`),
     );
     result = evaluate(toCheck, report, allow.entries, {
