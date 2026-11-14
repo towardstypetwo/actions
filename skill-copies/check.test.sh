@@ -143,5 +143,80 @@ else
     failed=$((failed + 1))
 fi
 
+# The fix commands.
+
+repo=$(new_repo)
+echo "# changed" >"$repo/.claude/skills/demo/SKILL.md"
+commit "$repo"
+expect "an edit in .claude/skills is named, with its copy and rsync commands" fail "$repo" \
+    "demo/SKILL.md: contents differ (.claude/skills changed)" \
+    "mkdir -p .agents/skills/demo && cp -p .claude/skills/demo/SKILL.md .agents/skills/demo/SKILL.md" \
+    "rsync -a --delete .claude/skills/ .agents/skills/" \
+    "git add .claude/skills .agents/skills"
+
+repo=$(new_repo)
+echo "# changed" >"$repo/.agents/skills/demo/SKILL.md"
+commit "$repo"
+expect "an edit in .agents/skills is copied the other way" fail "$repo" \
+    "(.agents/skills changed)" \
+    "cp -p .agents/skills/demo/SKILL.md .claude/skills/demo/SKILL.md" \
+    "rsync -a --delete .agents/skills/ .claude/skills/"
+
+repo=$(new_repo)
+git -C "$repo" rm -q .agents/skills/demo/scripts/run.sh
+commit "$repo"
+expect "a file deleted in .agents/skills is removed from .claude/skills" fail "$repo" \
+    "demo/scripts/run.sh: only in .claude/skills (.agents/skills changed)" \
+    "rm .claude/skills/demo/scripts/run.sh"
+
+repo=$(new_repo)
+echo "# one" >"$repo/.claude/skills/demo/SKILL.md"
+echo "# two" >"$repo/.agents/skills/demo/SKILL.md"
+commit "$repo"
+expect "an edit on both sides offers both directions" fail "$repo" \
+    "Can't tell which side changed" \
+    "To keep the .claude/skills version:" "To keep the .agents/skills version:"
+
+repo=$(new_repo)
+echo "# changed" >"$repo/.claude/skills/demo/SKILL.md"
+git -C "$repo" add -A
+git -C "$repo" commit -q --amend -m only
+expect "a root commit with no base offers both directions" fail "$repo" "Can't tell which side changed"
+
+repo=$(new_repo)
+echo "# changed" >"$repo/.claude/skills/demo/SKILL.md"
+commit "$repo"
+echo "# more" >"$repo/.claude/skills/demo/extra.md"
+commit "$repo"
+out=$(cd "$repo" && BASE=HEAD~2 bash "$check" 2>&1) || true
+if [[ $out == *"demo/SKILL.md: contents differ (.claude/skills changed)"* ]]; then
+    echo "ok   BASE sets the commit the change started from"
+    passed=$((passed + 1))
+else
+    echo "FAIL BASE sets the commit the change started from"
+    echo "$out"
+    failed=$((failed + 1))
+fi
+
+repo=$(new_repo)
+echo "# changed" >"$repo/.claude/skills/demo/SKILL.md"
+echo "# extra" >"$repo/.claude/skills/demo/extra.md"
+git -C "$repo" rm -q .claude/skills/demo/scripts/run.sh
+commit "$repo"
+(cd "$repo" && bash "$check" 2>&1 | sed -n 's/^  \(rsync .*\)$/\1/p' | bash) || true
+git -C "$repo" add -A
+git -C "$repo" commit -q -m fixed
+expect "the printed rsync command fixes the copies" pass "$repo" "matches"
+
+repo=$(new_repo)
+echo "# one" >"$repo/.claude/skills/demo/SKILL.md"
+echo "# two" >"$repo/.agents/skills/demo/SKILL.md"
+commit "$repo"
+out=$(cd "$repo" && bash "$check" 2>&1) || true
+(cd "$repo" && printf '%s\n' "$out" | sed -n '/^Can.t tell/,/^To keep the .agents/p' | sed -n 's/^  \(.*\)$/\1/p' | bash)
+git -C "$repo" add -A
+git -C "$repo" commit -q -m fixed
+expect "the printed per-file commands fix the copies" pass "$repo" "matches"
+
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
