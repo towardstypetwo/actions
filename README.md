@@ -39,10 +39,21 @@ Exceptions go in `package.json`, and a failing step prints the entry to add:
 - Malicious-package findings, npm's security placeholder, checks npq couldn't finish, and dependencies that don't come from registry.npmjs.org can't be allowed.
 - Transitive dependencies aren't checked.
 
+## check-skills-aligned
+
+Fails when `.agents/skills` differs from `.claude/skills` in any file's path, contents or mode, and prints the `cp`, `rm` or `rsync` commands that fix each file. With `fetch-depth: 2` on a pull request it also names the directory that was edited.
+
+```yaml
+- uses: actions/checkout@v7.0.1
+  with:
+    persist-credentials: false
+- uses: towardstypetwo/actions/check-skills-aligned@v1
+```
+
 ## Versions
 
 Releases are tagged `vX.Y.Z` on main, and `vN` points at the latest release of each major version.
 
 ## Development
 
-Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`.
+Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`. Test check-skills-aligned with `bash check-skills-aligned/check.test.sh`.

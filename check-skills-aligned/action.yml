@@ -1,0 +1,38 @@
+name: check skills aligned
+description: >-
+  Fail when .agents/skills differs from .claude/skills, comparing every file's
+  path, contents and mode, and print the files that differ with the commands
+  that fix them.
+inputs:
+  rev:
+    description: >-
+      Commit to compare the two directories at. The default, HEAD, is the
+      checked-out commit. Any other commit must already be fetched.
+    default: HEAD
+  base:
+    description: >-
+      Commit the change started from, which tells the failure output which
+      directory was edited. The default is the first parent of rev, the base
+      branch on a pull request's merge commit, which needs fetch-depth: 2.
+      When the commit isn't fetched, the output gives the fix for each
+      direction.
+    default: ''
+  fix:
+    description: >-
+      Extra text printed after the fix commands, such as a repo's own fix
+      script.
+    default: ''
+  path:
+    description: Directory of the git repository to check.
+    default: .
+runs:
+  using: composite
+  steps:
+    - name: Compare .claude/skills with .agents/skills
+      shell: bash
+      env:
+        REV: ${{ inputs.rev }}
+        BASE: ${{ inputs.base }}
+        FIX: ${{ inputs.fix }}
+      working-directory: ${{ inputs.path }}
+      run: bash "$GITHUB_ACTION_PATH/check.sh" "$REV"
