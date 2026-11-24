@@ -56,7 +56,7 @@ jobs:
           git add -A
           git -c user.email=ci@example.com -c user.name=ci commit -q -m base
       - id: matching
-        uses: ./check-skills-aligned
+        uses: $/check-skills-aligned
         with:
           path: ${{ runner.temp }}/fixture
       - name: Make one copy differ
@@ -66,7 +66,7 @@ jobs:
           git -c user.email=ci@example.com -c user.name=ci commit -q -am change
       - id: differing
         continue-on-error: true
-        uses: ./check-skills-aligned
+        uses: $/check-skills-aligned
         with:
           path: ${{ runner.temp }}/fixture
           fix: Run the fixer.
@@ -76,3 +76,70 @@ jobs:
           DIFFERING: ${{ steps.differing.outcome }}
         run: |
           [ "$MATCHING" = success ] && [ "$DIFFERING" = failure ]
+
+  # Runs lean-setup on a project whose one package clones from a local
+  # repository, then, in lean-setup-restore, on the same project with that
+  # repository deleted, so the build passes only when the cache restored the
+  # checkout. The package's build output is left out of the cache unless
+  # package-builds is true.
+  lean-setup-save:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        package-builds: ['false', 'true']
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      # The run ID makes the package cache key new on each run.
+      - run: bash lean-setup/make-test-project.sh "$RUNNER_TEMP/lean" "$GITHUB_RUN_ID"
+      - uses: $/lean-setup
+        with:
+          path: ${{ runner.temp }}/lean/project
+          package-builds: ${{ matrix.package-builds }}
+      - name: Build the project
+        working-directory: ${{ runner.temp }}/lean/project
+        run: |
+          cp lake-manifest.json "$RUNNER_TEMP/manifest.json"
+          lake build
+          # lake accepted the manifest make-test-project.sh wrote.
+          cmp lake-manifest.json "$RUNNER_TEMP/manifest.json"
+          # Something for the cache to leave out.
+          test -d .lake/packages/dep/.lake/build
+
+  lean-setup-restore:
+    needs: lean-setup-save
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        package-builds: ['false', 'true']
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make the project without the repository dep clones from
+        run: |
+          bash lean-setup/make-test-project.sh "$RUNNER_TEMP/lean" "$GITHUB_RUN_ID"
+          rm -rf "$RUNNER_TEMP/lean/dep-origin"
+      - id: setup
+        uses: $/lean-setup
+        with:
+          path: ${{ runner.temp }}/lean/project
+          package-builds: ${{ matrix.package-builds }}
+      - name: Check what the caches restored
+        working-directory: ${{ runner.temp }}/lean/project
+        env:
+          TOOLCHAIN_HIT: ${{ steps.setup.outputs.toolchain-cache-hit }}
+          PACKAGES_HIT: ${{ steps.setup.outputs.packages-cache-hit }}
+          PACKAGE_BUILDS: ${{ matrix.package-builds }}
+        run: |
+          [ "$TOOLCHAIN_HIT" = true ] && [ "$PACKAGES_HIT" = true ]
+          test -d .lake/packages/dep/.git
+          if [ "$PACKAGE_BUILDS" = true ]; then
+            test -d .lake/packages/dep/.lake/build
+          else
+            test ! -e .lake/packages/dep/.lake/build
+          fi
+          lake build
