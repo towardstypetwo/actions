@@ -105,8 +105,10 @@ jobs:
           lake build
           # lake accepted the manifest make-test-project.sh wrote.
           cmp lake-manifest.json "$RUNNER_TEMP/manifest.json"
-          # Something for the cache to leave out.
+          # Something for the cache to leave out, and something beside it
+          # for the cache to keep.
           test -d .lake/packages/dep/.lake/build
+          touch .lake/packages/dep/.lake/kept
 
   lean-setup-restore:
     needs: lean-setup-save
@@ -135,11 +137,13 @@ jobs:
           PACKAGES_HIT: ${{ steps.setup.outputs.packages-cache-hit }}
           PACKAGE_BUILDS: ${{ matrix.package-builds }}
         run: |
-          [ "$TOOLCHAIN_HIT" = true ] && [ "$PACKAGES_HIT" = true ]
+          [ "$TOOLCHAIN_HIT" = true ]
+          [ "$PACKAGES_HIT" = true ]
           test -d .lake/packages/dep/.git
           if [ "$PACKAGE_BUILDS" = true ]; then
             test -d .lake/packages/dep/.lake/build
           else
             test ! -e .lake/packages/dep/.lake/build
+            test -f .lake/packages/dep/.lake/kept
           fi
           lake build

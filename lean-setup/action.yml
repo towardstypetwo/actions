@@ -51,15 +51,19 @@ runs:
           echo "::error::$dir/lean-toolchain is missing; set path to the directory that holds it"
           exit 1
         fi
-        if [ "$dir" = . ]; then
-          packages=.lake/packages
-        else
-          packages=$dir/.lake/packages
+        manifest=$dir/lake-manifest.json
+        # The packages directory lake-manifest.json records, relative to the
+        # project.
+        packages=$(jq -r '.packagesDir // ".lake/packages"' "$manifest" 2>/dev/null || echo .lake/packages)
+        if [ "$dir" != . ]; then
+          packages=$dir/$packages
         fi
         {
           echo "toolchain-hash=$(sha256sum <"$dir/lean-toolchain" | cut -d' ' -f1)"
-          if [ -f "$dir/lake-manifest.json" ]; then
-            echo "packages-hash=$(cat "$dir/lean-toolchain" "$dir/lake-manifest.json" | sha256sum | cut -d' ' -f1)"
+          echo "toolchains=${ELAN_HOME:-~/.elan}/toolchains"
+          # No package cache without packages: its save would find nothing.
+          if [ -f "$manifest" ] && [ "$(jq '.packages | length' "$manifest")" -gt 0 ]; then
+            echo "packages-hash=$(cat "$dir/lean-toolchain" "$manifest" | sha256sum | cut -d' ' -f1)"
           fi
           echo 'packages-paths<<EOF'
           if [ "$PACKAGE_BUILDS" = true ]; then
@@ -85,17 +89,17 @@ runs:
         ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
       run: |
         tmp=$(mktemp -d "$RUNNER_TEMP/elan.XXXXXX")
-        curl -fsSL -o "$tmp/elan.tar.gz" \
+        curl -fsSL --retry 3 -o "$tmp/elan.tar.gz" \
           "https://github.com/leanprover/elan/releases/download/v${ELAN_VERSION}/elan-x86_64-unknown-linux-gnu.tar.gz"
         echo "${ELAN_SHA256}  $tmp/elan.tar.gz" | sha256sum -c -
         tar -xzf "$tmp/elan.tar.gz" -C "$tmp" elan-init
         # No default: lake installs the toolchain lean-toolchain names.
         "$tmp/elan-init" -y --default-toolchain none --no-modify-path
-        echo "$HOME/.elan/bin" >>"$GITHUB_PATH"
+        echo "${ELAN_HOME:-$HOME/.elan}/bin" >>"$GITHUB_PATH"
     - id: toolchain
       uses: actions/cache@v6.1.0
       with:
-        path: ~/.elan/toolchains
+        path: ${{ steps.project.outputs.toolchains }}
         key: lean-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.project.outputs.toolchain-hash }}
     # Lake's package checkouts, so a run with the same toolchain and manifest
     # doesn't clone them again.

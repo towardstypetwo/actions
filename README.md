@@ -52,7 +52,7 @@ Fails when `.agents/skills` differs from `.claude/skills` in any file's path, co
 
 ## lean-setup
 
-Installs elan 4.2.4 after checking its SHA-256, and caches what a Lean CI job downloads: the toolchains in `~/.elan/toolchains`, keyed on `lean-toolchain`, and lake's package checkouts in `.lake/packages`, keyed on `lean-toolchain` and `lake-manifest.json`. elan has no default toolchain, so the first `lake` command installs the one `lean-toolchain` names. It runs on Linux X64 runners.
+Installs elan 4.2.4 after checking its SHA-256, and caches what a Lean CI job downloads: the toolchains in `~/.elan/toolchains` (or `$ELAN_HOME/toolchains`), keyed on `lean-toolchain`, and lake's package checkouts in `.lake/packages`, keyed on `lean-toolchain` and `lake-manifest.json`. elan has no default toolchain, so the first `lake` command installs the one `lean-toolchain` names. It runs on Linux X64 runners.
 
 ```yaml
 - uses: actions/checkout@v7.0.1
@@ -65,8 +65,9 @@ Installs elan 4.2.4 after checking its SHA-256, and caches what a Lean CI job do
   working-directory: lean
 ```
 
-- `path` is the directory that holds `lean-toolchain` and `lake-manifest.json`. A project without a manifest gets no package cache.
+- `path` is the directory that holds `lean-toolchain` and `lake-manifest.json`. The package cache is skipped when the project has no `lake-manifest.json` or the manifest lists no packages.
 - The package cache leaves out each package's `.lake/build`, so a run skips the clones but builds the packages, or unpacks Mathlib's with `lake exe cache get`. Set `package-builds: true` to keep the builds too, when they are small enough to cache.
+- `lean-toolchain` should name a release, such as `leanprover/lean4:v4.35.0`. With a channel such as `stable`, the cache keeps restoring the toolchain it first saved after the channel moves on.
 - The outputs `toolchain-cache-hit` and `packages-cache-hit` say whether each cache matched its key.
 
 ## Versions

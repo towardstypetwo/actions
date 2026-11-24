@@ -3,14 +3,16 @@
 # requires one package, dep, cloned from the git repository DIR/dep-origin.
 # TAG goes into dep's source, so each CI run gets its own lake-manifest.json
 # and package cache key. The commit is made with fixed dates, so the same TAG
-# gives the same commit and manifest in every job.
+# gives the same commit and manifest in every job. DIR/dep-origin and
+# DIR/project must not exist yet.
 set -euo pipefail
 
-dir=$1
+mkdir -p "$1"
+dir=$(cd "$1" && pwd)
 tag=$2
 toolchain=leanprover/lean4:v4.35.0
 
-mkdir -p "$dir/dep-origin" "$dir/project"
+mkdir "$dir/dep-origin" "$dir/project"
 
 cd "$dir/dep-origin"
 echo "$toolchain" >lean-toolchain
