@@ -1,0 +1,111 @@
+name: lean setup
+description: >-
+  Install elan at a pinned version after checking its checksum, and cache the
+  Lean toolchain lean-toolchain names and the packages lake-manifest.json
+  pins.
+inputs:
+  path:
+    description: >-
+      Directory of the Lean project, which holds lean-toolchain and, when the
+      project has dependencies, lake-manifest.json.
+    default: .
+  package-builds:
+    description: >-
+      Whether the package cache also keeps each package's .lake/build. Leave
+      it false when a package's build output is large, such as Mathlib's,
+      which lake exe cache get unpacks instead; the cache then holds the
+      checkouts, so a run skips cloning them.
+    default: 'false'
+outputs:
+  toolchain-cache-hit:
+    description: Whether the toolchain cache had an exact match for its key.
+    value: ${{ steps.toolchain.outputs.cache-hit }}
+  packages-cache-hit:
+    description: >-
+      Whether the package cache had an exact match for its key. Empty when
+      the project has no lake-manifest.json.
+    value: ${{ steps.packages.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Find the Lean project's files
+      id: project
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.path }}
+        PACKAGE_BUILDS: ${{ inputs.package-builds }}
+      run: |
+        if [ "$RUNNER_OS-$RUNNER_ARCH" != Linux-X64 ]; then
+          echo "::error::lean-setup installs elan for Linux on X64; this runner is $RUNNER_OS on $RUNNER_ARCH"
+          exit 1
+        fi
+        case $PACKAGE_BUILDS in
+          true | false) ;;
+          *)
+            echo "::error::package-builds is '$PACKAGE_BUILDS'; use true or false"
+            exit 1
+            ;;
+        esac
+        dir=${PROJECT%/}
+        if [ ! -f "$dir/lean-toolchain" ]; then
+          echo "::error::$dir/lean-toolchain is missing; set path to the directory that holds it"
+          exit 1
+        fi
+        manifest=$dir/lake-manifest.json
+        # The packages directory lake-manifest.json records, relative to the
+        # project.
+        packages=$(jq -r '.packagesDir // ".lake/packages"' "$manifest" 2>/dev/null || echo .lake/packages)
+        if [ "$dir" != . ]; then
+          packages=$dir/$packages
+        fi
+        {
+          echo "toolchain-hash=$(sha256sum <"$dir/lean-toolchain" | cut -d' ' -f1)"
+          echo "toolchains=${ELAN_HOME:-~/.elan}/toolchains"
+          # No package cache without packages: its save would find nothing.
+          if [ -f "$manifest" ] && [ "$(jq '.packages | length' "$manifest")" -gt 0 ]; then
+            echo "packages-hash=$(cat "$dir/lean-toolchain" "$manifest" | sha256sum | cut -d' ' -f1)"
+          fi
+          echo 'packages-paths<<EOF'
+          if [ "$PACKAGE_BUILDS" = true ]; then
+            echo "$packages"
+          else
+            # actions/cache archives each matched path whole, so a negated
+            # pattern can't drop a directory inside one. These match each
+            # package's top-level entries, dotfiles included, and the
+            # entries of its .lake, leaving out .lake itself and .lake/build.
+            echo "$packages/*/*"
+            echo "!$packages/*/.lake"
+            echo "$packages/*/.lake/*"
+            echo "!$packages/*/.lake/build"
+          fi
+          echo EOF
+        } >>"$GITHUB_OUTPUT"
+    # From the pinned release rather than through an action, so a repo whose
+    # Actions policy lists only specific actions can use it.
+    - name: Install elan
+      shell: bash
+      env:
+        ELAN_VERSION: 4.2.4
+        ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+      run: |
+        tmp=$(mktemp -d "$RUNNER_TEMP/elan.XXXXXX")
+        curl -fsSL --retry 3 -o "$tmp/elan.tar.gz" \
+          "https://github.com/leanprover/elan/releases/download/v${ELAN_VERSION}/elan-x86_64-unknown-linux-gnu.tar.gz"
+        echo "${ELAN_SHA256}  $tmp/elan.tar.gz" | sha256sum -c -
+        tar -xzf "$tmp/elan.tar.gz" -C "$tmp" elan-init
+        # No default: lake installs the toolchain lean-toolchain names.
+        "$tmp/elan-init" -y --default-toolchain none --no-modify-path
+        echo "${ELAN_HOME:-$HOME/.elan}/bin" >>"$GITHUB_PATH"
+    - id: toolchain
+      uses: actions/cache@v6.1.0
+      with:
+        path: ${{ steps.project.outputs.toolchains }}
+        key: lean-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.project.outputs.toolchain-hash }}
+    # Lake's package checkouts, so a run with the same toolchain and manifest
+    # doesn't clone them again.
+    - id: packages
+      if: steps.project.outputs.packages-hash != ''
+      uses: actions/cache@v6.1.0
+      with:
+        path: ${{ steps.project.outputs.packages-paths }}
+        key: lake-packages-${{ runner.os }}-${{ runner.arch }}-${{ steps.project.outputs.packages-hash }}
