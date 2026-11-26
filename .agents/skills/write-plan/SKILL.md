@@ -38,7 +38,7 @@ something you could not confirm by reading, test it now if a small test will do.
 - **A folder**, when the work has phases and the later ones depend on what the earlier ones build,
   so their plans are better written later: `design/plans/<date>-<topic>/` with `overview.md` and a
   plan for each phase, named `<n>-<what-it-delivers>.md`. The number only sorts. A phase simple
-  enough to build from its row in the overview needs no file.
+  enough to build from its row in the overview doesn't need a file.
 
 ## One plan
 
