@@ -95,7 +95,8 @@ Builds [johnkferguson/sccache](https://github.com/johnkferguson/sccache) at a pi
 - Run it after Swatinem/rust-cache, whose key includes `RUSTC_WRAPPER` and which sets `CARGO_INCREMENTAL=0`. sccache can't cache incremental builds, so a job without rust-cache sets that itself.
 - `SCCACHE_BASEDIRS` is the workspace and `CARGO_HOME`, so the same crate built at a different checkout path still hits.
 - `rev` sets the sccache commit to build. The binary is cached per commit and per version of this action.
-- With `strict: true`, a failure to get sccache running is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork and Dependabot pull requests are exempt from the credential check.
+- It runs on Linux and macOS runners; elsewhere the job builds without it.
+- With `strict: true`, a failure to get sccache running is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork pull requests and Dependabot runs are exempt from the credential check.
 
   ```yaml
   - name: Fail if strict sccache broke

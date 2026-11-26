@@ -148,8 +148,8 @@ jobs:
           fi
           lake build
 
-  # Runs sccache-setup with no credentials, then with strict set. Fork and
-  # Dependabot pull requests are exempt from strict, so the second check
+  # Runs sccache-setup with no credentials, then with strict set. Fork pull
+  # requests and Dependabot runs are exempt from strict, so the second check
   # skips them.
   sccache-setup-without-credentials:
     runs-on: ubuntu-latest
@@ -168,9 +168,9 @@ jobs:
           strict: true
       - name: Check strict recorded the missing credentials
         if: >-
-          github.event_name != 'pull_request'
-          || (github.event.pull_request.head.repo.full_name == github.repository
-              && github.actor != 'dependabot[bot]')
+          github.actor != 'dependabot[bot]'
+          && (github.event.pull_request.head.repo.full_name == ''
+              || github.event.pull_request.head.repo.full_name == github.repository)
         run: |
           [ -z "${RUSTC_WRAPPER:-}" ]
           [ -n "${SCCACHE_STRICT_ERROR:-}" ]
