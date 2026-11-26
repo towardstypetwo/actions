@@ -147,3 +147,104 @@ jobs:
             test -f .lake/packages/dep/.lake/kept
           fi
           lake build
+
+  # Runs sccache-setup with no credentials, then with strict set. Fork and
+  # Dependabot pull requests are exempt from strict, so the second check
+  # skips them.
+  sccache-setup-without-credentials:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/sccache-setup
+      - name: Check the job builds without sccache
+        run: |
+          [ -z "${RUSTC_WRAPPER:-}" ]
+          [ -z "${SCCACHE_STRICT_ERROR:-}" ]
+      - uses: $/sccache-setup
+        with:
+          strict: true
+      - name: Check strict recorded the missing credentials
+        if: >-
+          github.event_name != 'pull_request'
+          || (github.event.pull_request.head.repo.full_name == github.repository
+              && github.actor != 'dependabot[bot]')
+        run: |
+          [ -z "${RUSTC_WRAPPER:-}" ]
+          [ -n "${SCCACHE_STRICT_ERROR:-}" ]
+
+  # Runs sccache-setup against a local S3 server, which accepts any
+  # credentials, and builds a crate twice, so the second build passes only
+  # when sccache served it. sccache-setup-restore then checks the binary came
+  # from the cache.
+  sccache-setup-save:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # sccache can't cache incremental builds. Swatinem/rust-cache turns
+      # them off in a real job.
+      CARGO_INCREMENTAL: 0
+    services:
+      s3:
+        image: motoserver/moto:5.2.5@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make the bucket
+        run: curl -fsS --retry 5 --retry-connrefused -X PUT http://localhost:5000/tt2-builds
+      - id: setup
+        uses: $/sccache-setup
+        with:
+          access-key-id: test
+          secret-access-key: test
+          endpoint: http://localhost:5000
+          strict: true
+      - name: Build a crate twice
+        run: |
+          [ "$RUSTC_WRAPPER" = sccache ]
+          cargo new --lib --vcs none "$GITHUB_WORKSPACE/sccache-test"
+          cd "$GITHUB_WORKSPACE/sccache-test"
+          cargo build
+          cargo clean
+          cargo build
+          sccache --show-stats
+          hits=$(sccache --show-stats --stats-format json | jq '[.stats.cache_hits.counts[]] | add // 0')
+          echo "cache hits: $hits"
+          [ "$hits" -gt 0 ]
+          [ -z "${SCCACHE_STRICT_ERROR:-}" ]
+
+  sccache-setup-restore:
+    needs: sccache-setup-save
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      s3:
+        image: motoserver/moto:5.2.5@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make the bucket
+        run: curl -fsS --retry 5 --retry-connrefused -X PUT http://localhost:5000/tt2-builds
+      - id: setup
+        uses: $/sccache-setup
+        with:
+          access-key-id: test
+          secret-access-key: test
+          endpoint: http://localhost:5000
+          strict: true
+      - name: Check the binary came from the cache
+        env:
+          BINARY_HIT: ${{ steps.setup.outputs.binary-cache-hit }}
+        run: |
+          [ "$BINARY_HIT" = true ]
+          [ "$RUSTC_WRAPPER" = sccache ]
+          [ -z "${SCCACHE_STRICT_ERROR:-}" ]
+          sccache --show-stats

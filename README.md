@@ -70,10 +70,48 @@ Installs elan 4.2.4 after checking its SHA-256, and caches what a Lean CI job do
 - `lean-toolchain` should name a release, such as `leanprover/lean4:v4.35.0`. With a channel such as `stable`, the cache keeps restoring the toolchain it first saved after the channel moves on.
 - The outputs `toolchain-cache-hit` and `packages-cache-hit` say whether each cache matched its key.
 
+## sccache-setup
+
+Builds [johnkferguson/sccache](https://github.com/johnkferguson/sccache) at a pinned commit, caches the binary, starts its server on the shared R2 bucket `tt2-builds` under the `sccache/` prefix, and sets `RUSTC_WRAPPER=sccache`. Without credentials, or when sccache fails to build or start, the job builds without it, so fork and Dependabot pull requests, which get no secrets, still build.
+
+```yaml
+- uses: actions/checkout@v7.0.1
+  with:
+    persist-credentials: false
+- uses: Swatinem/rust-cache@v2.9.3
+- uses: towardstypetwo/actions/sccache-setup@v1
+  with:
+    access-key-id: ${{ secrets.R2_BUILDS_WRITE_ACCESS_KEY_ID }}
+    secret-access-key: ${{ secrets.R2_BUILDS_WRITE_SECRET_ACCESS_KEY }}
+    account-id: ${{ vars.R2_ACCOUNT_ID }}
+- run: cargo nextest run --workspace
+- name: sccache stats
+  if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
+  continue-on-error: true
+  run: sccache --show-stats
+```
+
+- The secrets and the `R2_ACCOUNT_ID` variable are set on the organization. A composite action can't read either, so the job passes them in.
+- Run it after Swatinem/rust-cache, whose key includes `RUSTC_WRAPPER` and which sets `CARGO_INCREMENTAL=0`. sccache can't cache incremental builds, so a job without rust-cache sets that itself.
+- `SCCACHE_BASEDIRS` is the workspace and `CARGO_HOME`, so the same crate built at a different checkout path still hits.
+- `rev` sets the sccache commit to build. The binary is cached per commit and per version of this action.
+- With `strict: true`, a failure to get sccache running is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork and Dependabot pull requests are exempt from the credential check.
+
+  ```yaml
+  - name: Fail if strict sccache broke
+    if: ${{ !cancelled() && env.SCCACHE_STRICT_ERROR != '' }}
+    run: |
+      echo "::error::$SCCACHE_STRICT_ERROR"
+      exit 1
+  ```
+
+- `endpoint` replaces the R2 endpoint `account-id` names, such as with a local S3 server in a test.
+- The output `binary-cache-hit` says whether the sccache binary came from the cache.
+
 ## Versions
 
 Releases are tagged `vX.Y.Z` on main, and `vN` points at the latest release of each major version.
 
 ## Development
 
-Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`. Test check-skills-aligned with `bash check-skills-aligned/check.test.sh`. CI tests lean-setup by running it twice on a project `lean-setup/make-test-project.sh` makes: the second run builds with the package's repository deleted.
+Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`. Test check-skills-aligned with `bash check-skills-aligned/check.test.sh`. CI tests lean-setup by running it twice on a project `lean-setup/make-test-project.sh` makes: the second run builds with the package's repository deleted. CI tests sccache-setup without credentials, and against a local S3 server, where a crate's second build must hit the cache and a second job must restore the sccache binary.

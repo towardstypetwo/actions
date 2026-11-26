@@ -1,0 +1,134 @@
+name: sccache setup
+description: >-
+  Build johnkferguson/sccache at a pinned commit, cache the binary, start its
+  server on the shared R2 bucket and set RUSTC_WRAPPER. Without credentials,
+  or if sccache fails to build or start, the job builds without it. Use after
+  Swatinem/rust-cache, whose key includes RUSTC_WRAPPER.
+inputs:
+  access-key-id:
+    description: R2 access key ID. Empty when the job gets no secrets.
+    default: ''
+  secret-access-key:
+    description: R2 secret access key. Empty when the job gets no secrets.
+    default: ''
+  account-id:
+    description: Cloudflare account ID, for the R2 endpoint.
+    default: ''
+  endpoint:
+    description: >-
+      S3 endpoint to use instead of the R2 one account-id names, such as a
+      local S3 server in a test.
+    default: ''
+  rev:
+    description: Commit of johnkferguson/sccache to build.
+    default: 629401a732ad3731caf121f5bab54b0c9fb4f211
+  strict:
+    description: >-
+      Whether a failure to get sccache running is recorded in
+      SCCACHE_STRICT_ERROR, for the job to fail on after its tests. Fork and
+      Dependabot pull requests, which get no secrets, are exempt from the
+      credential check.
+    default: 'false'
+outputs:
+  binary-cache-hit:
+    description: >-
+      Whether the sccache binary cache had an exact match for its key. Empty
+      without credentials.
+    value: ${{ steps.bin.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Check for R2 credentials
+      id: creds
+      shell: bash
+      env:
+        KEY_ID: ${{ inputs.access-key-id }}
+        SECRET: ${{ inputs.secret-access-key }}
+        ACCOUNT_ID: ${{ inputs.account-id }}
+        ENDPOINT: ${{ inputs.endpoint }}
+        STRICT: ${{ inputs.strict }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      run: |
+        case $STRICT in
+          true | false) ;;
+          *)
+            echo "::error::strict is '$STRICT'; use true or false"
+            exit 1
+            ;;
+        esac
+        if [ -n "$ENDPOINT" ]; then
+          endpoint=$ENDPOINT
+        elif [ -n "$ACCOUNT_ID" ]; then
+          endpoint=https://$ACCOUNT_ID.r2.cloudflarestorage.com
+        else
+          endpoint=
+        fi
+        if [ -n "$KEY_ID" ] && [ -n "$SECRET" ] && [ -n "$endpoint" ]; then
+          {
+            echo "ok=true"
+            echo "endpoint=$endpoint"
+            # A changed action, such as a new build command, rebuilds the
+            # binary.
+            echo "action-hash=$(sha256sum <"$GITHUB_ACTION_PATH/action.yml" | cut -d' ' -f1)"
+          } >>"$GITHUB_OUTPUT"
+        elif [ "$GITHUB_EVENT_NAME" = pull_request ] \
+          && { [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ] || [ "$GITHUB_ACTOR" = 'dependabot[bot]' ]; }; then
+          # Fork and Dependabot pull requests get no secrets, even when strict.
+          echo "::notice::No R2 credentials, so this job builds without sccache."
+        elif [ "$STRICT" = true ]; then
+          echo "::warning::No R2 credentials, so this job builds without sccache."
+          echo "SCCACHE_STRICT_ERROR=No R2 credentials reached sccache-setup." >>"$GITHUB_ENV"
+        else
+          echo "::warning::No R2 credentials, so this job builds without sccache."
+        fi
+    - name: Restore sccache binary
+      if: steps.creds.outputs.ok == 'true'
+      id: bin
+      uses: actions/cache@v6.1.0
+      with:
+        path: ~/.sccache-fork
+        key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rev }}-s3-${{ steps.creds.outputs.action-hash }}
+    - name: Build sccache
+      if: steps.creds.outputs.ok == 'true' && steps.bin.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        REV: ${{ inputs.rev }}
+        STRICT: ${{ inputs.strict }}
+      run: |
+        if cargo install --locked --root "$RUNNER_TEMP/sccache-build" \
+          --git https://github.com/johnkferguson/sccache --rev "$REV" \
+          --no-default-features --features s3 sccache; then
+          mv "$RUNNER_TEMP/sccache-build" ~/.sccache-fork
+        else
+          echo "::warning::sccache failed to build, so this job builds without it."
+          if [ "$STRICT" = true ]; then
+            echo "SCCACHE_STRICT_ERROR=sccache failed to build at $REV." >>"$GITHUB_ENV"
+          fi
+        fi
+    - name: Start sccache
+      if: steps.creds.outputs.ok == 'true'
+      shell: bash
+      env:
+        SCCACHE_BUCKET: tt2-builds
+        SCCACHE_ENDPOINT: ${{ steps.creds.outputs.endpoint }}
+        SCCACHE_REGION: auto
+        SCCACHE_S3_KEY_PREFIX: sccache/
+        AWS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
+        SCCACHE_IDLE_TIMEOUT: 0
+        SCCACHE_ERROR_LOG: ${{ runner.temp }}/sccache.log
+        STRICT: ${{ inputs.strict }}
+      run: |
+        sccache=~/.sccache-fork/bin/sccache
+        export SCCACHE_BASEDIRS="$GITHUB_WORKSPACE:${CARGO_HOME:-$HOME/.cargo}"
+        if ! "$sccache" --start-server; then
+          cat "$SCCACHE_ERROR_LOG" 2>/dev/null || true
+          echo "::warning::sccache failed to start, so this job builds without it."
+          if [ "$STRICT" = true ] && [ -z "${SCCACHE_STRICT_ERROR:-}" ]; then
+            echo "SCCACHE_STRICT_ERROR=sccache failed to start." >>"$GITHUB_ENV"
+          fi
+          exit 0
+        fi
+        "$sccache" --show-stats || true
+        echo "$HOME/.sccache-fork/bin" >>"$GITHUB_PATH"
+        echo "RUSTC_WRAPPER=sccache" >>"$GITHUB_ENV"
