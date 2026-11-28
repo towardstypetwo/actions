@@ -245,22 +245,24 @@ Reread the body as the cold reviewer:
 - Is the body within the size targets? If not, does the change truly need more?
 - Is the body longer than they need in order to judge the change with confidence? If so, cut it.
 
-## Watch CI after pushing
+## Review, then watch CI
 
-After opening a PR or pushing to one, watch the checks on its latest commit until they finish. Checks on earlier commits don't matter.
+Start the code review as soon as the draft PR is open, without waiting for its CI. Review fixes usually replace that commit, so its CI result would be thrown away.
 
-```
-timeout 30m gh pr checks <pr> --watch --fail-fast --interval 30 >/dev/null; echo "exit=$?"
-gh pr checks <pr>
-gh run view <run-id> --log-failed
-```
+Watch CI on the commit you will mark ready, after the review fixes are pushed. On a PR that is already ready, watch each push. Don't watch commits a later push will replace.
 
-- The first command blocks and prints one line: `exit=0` means every check passed, `1` a check failed, `124` the timeout ran out. Run it in the background so the session isn't stuck.
-- Wait about 30 seconds after a push: until the new commit's checks register, gh reports none of them (exit 1) or only the ones already started. If none appear after a few minutes, the workflows' path or event filters skip this change, and there is nothing to watch.
-- Green: you're done, stop checking. Red: run `gh pr checks <pr>` once for the table, whose links carry the run ID, read the failed steps' log, fix what the change broke, push, and watch again.
-- On a timeout, check once without `--watch` (exit 8 means still pending). If checks are still running, watch again, up to about twice the repo's usual CI time. If a check hasn't started after 15 minutes, report it as a runner or queue problem and stop.
-- When the failure isn't caused by the change, such as a flaky test or main already red, say so in a PR comment rather than changing unrelated code.
-- A draft PR may run fewer checks than a ready one, so watch again after marking it ready.
+Watch with `scripts/watch-ci.sh` in this skill's directory, run by its path from the PR branch's checkout, for example `bash .agents/skills/pr/scripts/watch-ci.sh`. It takes an optional PR number and defaults to the current branch's PR. It waits for the checks to register and watches them, for up to 9 minutes in all, so run it in the foreground with the shell tool's time limit above that, and don't write a polling loop of your own. If the tool can't wait that long, pass `--minutes N` below its limit.
+
+It ends with one line that says what to do next. The exit code is:
+
+- `0`: every check passed or was skipped. Stop watching.
+- `1`: a check failed or was cancelled; the line names each one and its run ID.
+- `2`: `gh` failed or the arguments are wrong.
+- `3`: no checks registered; the workflows' filters skip this change.
+- `4`: the checkout isn't at the PR's head commit.
+- `5`: checks are still running. Run it again.
+
+In Claude Code, the review is `/code-review`, and the script is `.claude/skills/pr/scripts/watch-ci.sh`. Set the Bash tool's `timeout` to `600000` for the watch and leave `run_in_background` off; the default 2-minute limit is shorter than the watch.
 
 ## Split work into PRs
 
