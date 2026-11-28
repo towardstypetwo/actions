@@ -1,9 +1,10 @@
 name: sccache setup
 description: >-
-  Build johnkferguson/sccache at a pinned commit, cache the binary, start its
-  server on the shared R2 bucket and set RUSTC_WRAPPER. Without credentials,
-  or if sccache fails to build or start, the job builds without it. Use after
-  Swatinem/rust-cache, whose key includes RUSTC_WRAPPER.
+  Download a pinned johnkferguson/sccache release binary, or build the fork
+  at a pinned commit when that fails, start its server on the shared R2
+  bucket and set RUSTC_WRAPPER. Without credentials, or if sccache fails to
+  install or start, the job builds without it. Use after Swatinem/rust-cache,
+  whose key includes RUSTC_WRAPPER.
 inputs:
   access-key-id:
     description: R2 access key ID. Empty when the job gets no secrets.
@@ -19,9 +20,22 @@ inputs:
       S3 endpoint to use instead of the R2 one account-id names, such as a
       local S3 server in a test.
     default: ''
+  release:
+    description: >-
+      Release tag of johnkferguson/sccache to download on Linux X64 runners.
+      Empty builds rev instead.
+    default: v0.19.0-fork.1
+  release-sha256:
+    description: >-
+      SHA-256 of the release's x86_64-unknown-linux-musl tarball. A mismatch
+      builds rev instead, and is recorded when strict.
+    default: c9fc025aa70aeb7bf942035f82b02ad3b0748d8b20dba59b051cccee7d4fe205
   rev:
-    description: Commit of johnkferguson/sccache to build.
-    default: 629401a732ad3731caf121f5bab54b0c9fb4f211
+    description: >-
+      Commit of johnkferguson/sccache to build when the release can't be
+      used, such as on macOS. Keep it on the commit the release's tag
+      points at.
+    default: b4eb91e9cacbc11bedca4602c55c46ced7e29aa2
   strict:
     description: >-
       Whether a failure to get sccache running is recorded in
@@ -30,10 +44,18 @@ inputs:
       credential check.
     default: 'false'
 outputs:
+  binary-source:
+    description: >-
+      Where the sccache binary came from: release, cache or build. Empty
+      without credentials or when the build failed.
+    value: >-
+      ${{ steps.download.outputs.source
+      || (steps.bin.outputs.cache-hit == 'true' && 'cache')
+      || steps.build.outputs.source }}
   binary-cache-hit:
     description: >-
-      Whether the sccache binary cache had an exact match for its key. Empty
-      without credentials.
+      Whether the cache of the built sccache binary had an exact match for
+      its key. Empty without credentials or when the release was used.
     value: ${{ steps.bin.outputs.cache-hit }}
 runs:
   using: composite
@@ -93,15 +115,55 @@ runs:
             echo "action-hash=$(sha256sum <"$GITHUB_ACTION_PATH/action.yml" | cut -d' ' -f1)"
           } >>"$GITHUB_OUTPUT"
         fi
+    - name: Download sccache release
+      if: >-
+        steps.creds.outputs.ok == 'true' && inputs.release != ''
+        && runner.os == 'Linux' && runner.arch == 'X64'
+      id: download
+      shell: bash
+      env:
+        RELEASE: ${{ inputs.release }}
+        SHA256: ${{ inputs.release-sha256 }}
+        STRICT: ${{ inputs.strict }}
+      run: |
+        name=sccache-$RELEASE-x86_64-unknown-linux-musl
+        dir=$RUNNER_TEMP/sccache-release
+        rm -rf "$dir"
+        mkdir -p "$dir/bin"
+        fail() {
+          echo "::warning::$1, so sccache-setup builds the fork from source."
+          # A broken release pin costs each job a build, so strict jobs fail
+          # on it even when the build works.
+          if [ "$STRICT" = true ]; then
+            echo "SCCACHE_STRICT_ERROR=$1." >>"$GITHUB_ENV"
+          fi
+          exit 0
+        }
+        curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 -o "$dir/$name.tar.gz" \
+          "https://github.com/johnkferguson/sccache/releases/download/$RELEASE/$name.tar.gz" \
+          || fail "The sccache release $RELEASE failed to download"
+        echo "$SHA256  $dir/$name.tar.gz" | sha256sum -c --quiet \
+          || fail "The sccache release $RELEASE doesn't match release-sha256"
+        tar -xzf "$dir/$name.tar.gz" -C "$dir" "$name/sccache" \
+          || fail "The sccache release $RELEASE has no $name/sccache"
+        mv "$dir/$name/sccache" "$dir/bin/sccache"
+        "$dir/bin/sccache" --version || fail "The sccache release $RELEASE doesn't run"
+        rm -rf ~/.sccache-fork
+        mkdir -p ~/.sccache-fork
+        mv "$dir/bin" ~/.sccache-fork/bin
+        echo "source=release" >>"$GITHUB_OUTPUT"
     - name: Restore sccache binary
-      if: steps.creds.outputs.ok == 'true'
+      if: steps.creds.outputs.ok == 'true' && steps.download.outputs.source != 'release'
       id: bin
       uses: actions/cache@v6.1.0
       with:
         path: ~/.sccache-fork
         key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rev }}-s3-${{ steps.creds.outputs.action-hash }}
     - name: Build sccache
-      if: steps.creds.outputs.ok == 'true' && steps.bin.outputs.cache-hit != 'true'
+      if: >-
+        steps.creds.outputs.ok == 'true' && steps.download.outputs.source != 'release'
+        && steps.bin.outputs.cache-hit != 'true'
+      id: build
       shell: bash
       env:
         REV: ${{ inputs.rev }}
@@ -113,7 +175,9 @@ runs:
         if cargo install --locked --root "$RUNNER_TEMP/sccache-build" \
           --git https://github.com/johnkferguson/sccache --rev "$REV" \
           --no-default-features --features s3 sccache; then
+          rm -rf ~/.sccache-fork
           mv "$RUNNER_TEMP/sccache-build" ~/.sccache-fork
+          echo "source=build" >>"$GITHUB_OUTPUT"
         else
           echo "::warning::sccache failed to build, so this job builds without it."
           if [ "$STRICT" = true ]; then
@@ -135,7 +199,7 @@ runs:
         STRICT: ${{ inputs.strict }}
       run: |
         sccache=~/.sccache-fork/bin/sccache
-        # The build step already reported a failed build.
+        # The download and build steps already reported their failures.
         [ -x "$sccache" ] || exit 0
         export SCCACHE_BASEDIRS="$GITHUB_WORKSPACE:${CARGO_HOME:-$HOME/.cargo}"
         if ! "$sccache" --start-server; then

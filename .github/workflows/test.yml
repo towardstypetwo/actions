@@ -176,12 +176,11 @@ jobs:
           [ -n "${SCCACHE_STRICT_ERROR:-}" ]
 
   # Runs sccache-setup against a local S3 server, which accepts any
-  # credentials, and builds a crate twice, so the second build passes only
-  # when sccache served it. sccache-setup-restore then checks the binary came
-  # from the cache.
-  sccache-setup-save:
+  # credentials, with the default release, and builds a crate twice, so the
+  # second build passes only when the downloaded sccache served it.
+  sccache-setup-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     env:
       # sccache can't cache incremental builds. Swatinem/rust-cache turns
       # them off in a real job.
@@ -204,6 +203,15 @@ jobs:
           secret-access-key: test
           endpoint: http://localhost:5000
           strict: true
+      - name: Check the binary came from the release
+        env:
+          SOURCE: ${{ steps.setup.outputs.binary-source }}
+          BINARY_HIT: ${{ steps.setup.outputs.binary-cache-hit }}
+        run: |
+          [ "$SOURCE" = release ]
+          [ -z "$BINARY_HIT" ]
+          [ "$(command -v sccache)" = "$HOME/.sccache-fork/bin/sccache" ]
+          sccache --version
       - name: Build a crate twice
         run: |
           [ "$RUSTC_WRAPPER" = sccache ]
@@ -217,6 +225,52 @@ jobs:
           echo "cache hits: $hits"
           [ "$hits" -gt 0 ]
           [ -z "${SCCACHE_STRICT_ERROR:-}" ]
+
+  # Runs sccache-setup with a release that doesn't exist, so it builds rev
+  # and caches the binary, and builds a crate twice with it. Then, in
+  # sccache-setup-restore, it runs with a release whose checksum doesn't
+  # match, so the binary must come from that cache and strict must record
+  # the mismatch.
+  sccache-setup-save:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+    services:
+      s3:
+        image: motoserver/moto:5.2.5@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make the bucket
+        run: curl -fsS --retry 5 --retry-connrefused -X PUT http://localhost:5000/tt2-builds
+      - id: setup
+        uses: $/sccache-setup
+        with:
+          access-key-id: test
+          secret-access-key: test
+          endpoint: http://localhost:5000
+          release: v0.0.0-missing
+      - name: Check the binary was built
+        env:
+          SOURCE: ${{ steps.setup.outputs.binary-source }}
+        run: |
+          # A rerun restores the binary the first run saved.
+          [ "$SOURCE" = build ] || [ "$SOURCE" = cache ]
+          [ "$RUSTC_WRAPPER" = sccache ]
+      - name: Build a crate twice
+        run: |
+          cargo new --lib --vcs none "$GITHUB_WORKSPACE/sccache-test"
+          cd "$GITHUB_WORKSPACE/sccache-test"
+          cargo build
+          cargo clean
+          cargo build
+          hits=$(sccache --show-stats --stats-format json | jq '[.stats.cache_hits.counts[]] | add // 0')
+          echo "cache hits: $hits"
+          [ "$hits" -gt 0 ]
 
   sccache-setup-restore:
     needs: sccache-setup-save
@@ -240,11 +294,15 @@ jobs:
           secret-access-key: test
           endpoint: http://localhost:5000
           strict: true
+          release-sha256: 0000000000000000000000000000000000000000000000000000000000000000
       - name: Check the binary came from the cache
         env:
+          SOURCE: ${{ steps.setup.outputs.binary-source }}
           BINARY_HIT: ${{ steps.setup.outputs.binary-cache-hit }}
         run: |
+          [ "$SOURCE" = cache ]
           [ "$BINARY_HIT" = true ]
           [ "$RUSTC_WRAPPER" = sccache ]
-          [ -z "${SCCACHE_STRICT_ERROR:-}" ]
+          echo "$SCCACHE_STRICT_ERROR"
+          [[ "$SCCACHE_STRICT_ERROR" == *"doesn't match release-sha256"* ]]
           sccache --show-stats

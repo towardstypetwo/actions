@@ -72,7 +72,7 @@ Installs elan 4.2.4 after checking its SHA-256, and caches what a Lean CI job do
 
 ## sccache-setup
 
-Builds [johnkferguson/sccache](https://github.com/johnkferguson/sccache) at a pinned commit, caches the binary, starts its server on the shared R2 bucket `tt2-builds` under the `sccache/` prefix, and sets `RUSTC_WRAPPER=sccache`. Without credentials, or when sccache fails to build or start, the job builds without it, so fork and Dependabot pull requests, which get no secrets, still build.
+Downloads a pinned release of [johnkferguson/sccache](https://github.com/johnkferguson/sccache) and checks its SHA-256, starts its server on the shared R2 bucket `tt2-builds` under the `sccache/` prefix, and sets `RUSTC_WRAPPER=sccache`. Without credentials, or when sccache fails to install or start, the job builds without it, so fork and Dependabot pull requests, which get no secrets, still build.
 
 ```yaml
 - uses: actions/checkout@v7.0.1
@@ -94,9 +94,10 @@ Builds [johnkferguson/sccache](https://github.com/johnkferguson/sccache) at a pi
 - The secrets and the `R2_ACCOUNT_ID` variable are set on the organization. A composite action can't read either, so the job passes them in.
 - Run it after Swatinem/rust-cache, whose key includes `RUSTC_WRAPPER` and which sets `CARGO_INCREMENTAL=0`. sccache can't cache incremental builds, so a job without rust-cache sets that itself.
 - `SCCACHE_BASEDIRS` is the workspace and `CARGO_HOME`, so the same crate built at a different checkout path still hits.
-- `rev` sets the sccache commit to build. The binary is cached per commit and per version of this action.
+- `release` is the release tag to download and `release-sha256` the SHA-256 of its `x86_64-unknown-linux-musl` tarball; change them together. The release has only a Linux X64 binary.
+- When the download, checksum or `sccache --version` fails, or on macOS and Linux ARM64 runners, or with `release: ''`, it builds the fork at `rev` with `cargo install`, which takes a few minutes, and caches the binary per commit and per version of this action. Keep `rev` on the commit the release's tag points at.
 - It runs on Linux and macOS runners; elsewhere the job builds without it.
-- With `strict: true`, a failure to get sccache running is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork pull requests and Dependabot runs are exempt from the credential check.
+- With `strict: true`, a failure to get sccache running, or to use the release, is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork pull requests and Dependabot runs are exempt from the credential check.
 
   ```yaml
   - name: Fail if strict sccache broke
@@ -107,7 +108,7 @@ Builds [johnkferguson/sccache](https://github.com/johnkferguson/sccache) at a pi
   ```
 
 - `endpoint` replaces the R2 endpoint `account-id` names, such as with a local S3 server in a test.
-- The output `binary-cache-hit` says whether the sccache binary came from the cache.
+- The output `binary-source` says where the binary came from: `release`, `cache` or `build`. `binary-cache-hit` says whether the built binary's cache matched its key.
 
 ## Versions
 
@@ -115,4 +116,4 @@ Releases are tagged `vX.Y.Z` on main, and `vN` points at the latest release of e
 
 ## Development
 
-Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`. Test check-skills-aligned with `bash check-skills-aligned/check.test.sh`. CI tests lean-setup by running it twice on a project `lean-setup/make-test-project.sh` makes: the second run builds with the package's repository deleted. CI tests sccache-setup without credentials, and against a local S3 server, where a crate's second build must hit the cache and a second job must restore the sccache binary.
+Run `pnpm install --dir npq-check --ignore-scripts`, then `node --test npq-check/check.test.mjs`. Test check-skills-aligned with `bash check-skills-aligned/check.test.sh`. CI tests lean-setup by running it twice on a project `lean-setup/make-test-project.sh` makes: the second run builds with the package's repository deleted. CI tests sccache-setup without credentials, and against a local S3 server: with the release, where a crate's second build must hit the cache, and with a missing release and a wrong checksum, where it builds the binary and a second job must restore it from the cache.
