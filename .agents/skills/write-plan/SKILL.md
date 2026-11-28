@@ -59,8 +59,8 @@ detail.
   main types, the interfaces between the pieces, and where it lives. At each point where it joins
   existing code, give the pointer and any trap you found there. In a fork, name the upstream files
   it edits. Sketch signatures and fields; leave bodies to the implementer. Before sketching code,
-  invoke the skills the repo has for that language, so the names, types and interfaces follow its
-  rules.
+  invoke the skills the repo has for that language, and its `code-naming` skill if it has one, so
+  the names, types and interfaces follow their rules.
 - **Suggested breakdown.** The work by pull request, in merge order: a table, then a numbered list
   of notes. Every plan has one, a phase plan included, even when the work is one pull request.
 - **Success criteria.** 2 to 5 lines per pull request. Each names a behaviour and the test that

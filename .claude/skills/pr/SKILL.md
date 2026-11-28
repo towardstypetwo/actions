@@ -19,7 +19,7 @@ Read the repo's CLAUDE.md, AGENTS.md and PR skills first.
 
 Work through these in order. The sections below give each step's checklist.
 
-1. **Prepare the change.** If the repo has a `code-naming` skill, check every name the change adds against it. Cut doc and comment text in the change to what a reader needs.
+1. **Prepare the change.** If the repo has a `code-naming` skill, run its naming pass on every name the change adds or renames. Cut doc and comment text in the change to what a reader needs.
 2. **Open a draft PR.** Read [reference/description.md](reference/description.md) before writing the description or editing any PR body. To split the work into several PRs or stack one on another, read [reference/split-and-stack.md](reference/split-and-stack.md) first.
 3. **Review the whole PR once,** at the depth for its kind of change. Start right after opening the draft, without waiting for its CI.
 4. **Fix the findings you agree with.** Keep a list of the ones you decline, each with a one-line reason.
