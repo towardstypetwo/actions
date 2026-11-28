@@ -28,14 +28,14 @@ inputs:
   release-sha256:
     description: >-
       SHA-256 of the release's x86_64-unknown-linux-musl tarball. A mismatch
-      builds rev instead.
+      builds rev instead, and is recorded when strict.
     default: c9fc025aa70aeb7bf942035f82b02ad3b0748d8b20dba59b051cccee7d4fe205
   rev:
     description: >-
       Commit of johnkferguson/sccache to build when the release can't be
-      used, such as on macOS. Keep it on the source the release was built
-      from.
-    default: 629401a732ad3731caf121f5bab54b0c9fb4f211
+      used, such as on macOS. Keep it on the commit the release's tag
+      points at.
+    default: b4eb91e9cacbc11bedca4602c55c46ced7e29aa2
   strict:
     description: >-
       Whether a failure to get sccache running is recorded in
@@ -124,6 +124,7 @@ runs:
       env:
         RELEASE: ${{ inputs.release }}
         SHA256: ${{ inputs.release-sha256 }}
+        STRICT: ${{ inputs.strict }}
       run: |
         name=sccache-$RELEASE-x86_64-unknown-linux-musl
         dir=$RUNNER_TEMP/sccache-release
@@ -131,9 +132,14 @@ runs:
         mkdir -p "$dir/bin"
         fail() {
           echo "::warning::$1, so sccache-setup builds the fork from source."
+          # A broken release pin costs each job a build, so strict jobs fail
+          # on it even when the build works.
+          if [ "$STRICT" = true ]; then
+            echo "SCCACHE_STRICT_ERROR=$1." >>"$GITHUB_ENV"
+          fi
           exit 0
         }
-        curl -fsSL --retry 3 --max-time 120 -o "$dir/$name.tar.gz" \
+        curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 -o "$dir/$name.tar.gz" \
           "https://github.com/johnkferguson/sccache/releases/download/$RELEASE/$name.tar.gz" \
           || fail "The sccache release $RELEASE failed to download"
         echo "$SHA256  $dir/$name.tar.gz" | sha256sum -c --quiet \
@@ -169,6 +175,7 @@ runs:
         if cargo install --locked --root "$RUNNER_TEMP/sccache-build" \
           --git https://github.com/johnkferguson/sccache --rev "$REV" \
           --no-default-features --features s3 sccache; then
+          rm -rf ~/.sccache-fork
           mv "$RUNNER_TEMP/sccache-build" ~/.sccache-fork
           echo "source=build" >>"$GITHUB_OUTPUT"
         else

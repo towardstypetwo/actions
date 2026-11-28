@@ -227,11 +227,15 @@ jobs:
           [ -z "${SCCACHE_STRICT_ERROR:-}" ]
 
   # Runs sccache-setup with a release that doesn't exist, so it builds rev
-  # and caches the binary, then, in sccache-setup-restore, with a release
-  # whose checksum doesn't match, so the binary must come from that cache.
+  # and caches the binary, and builds a crate twice with it. Then, in
+  # sccache-setup-restore, it runs with a release whose checksum doesn't
+  # match, so the binary must come from that cache and strict must record
+  # the mismatch.
   sccache-setup-save:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
     services:
       s3:
         image: motoserver/moto:5.2.5@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a
@@ -249,16 +253,24 @@ jobs:
           access-key-id: test
           secret-access-key: test
           endpoint: http://localhost:5000
-          strict: true
           release: v0.0.0-missing
       - name: Check the binary was built
         env:
           SOURCE: ${{ steps.setup.outputs.binary-source }}
         run: |
+          # A rerun restores the binary the first run saved.
           [ "$SOURCE" = build ] || [ "$SOURCE" = cache ]
           [ "$RUSTC_WRAPPER" = sccache ]
-          [ -z "${SCCACHE_STRICT_ERROR:-}" ]
-          sccache --show-stats
+      - name: Build a crate twice
+        run: |
+          cargo new --lib --vcs none "$GITHUB_WORKSPACE/sccache-test"
+          cd "$GITHUB_WORKSPACE/sccache-test"
+          cargo build
+          cargo clean
+          cargo build
+          hits=$(sccache --show-stats --stats-format json | jq '[.stats.cache_hits.counts[]] | add // 0')
+          echo "cache hits: $hits"
+          [ "$hits" -gt 0 ]
 
   sccache-setup-restore:
     needs: sccache-setup-save
@@ -291,5 +303,6 @@ jobs:
           [ "$SOURCE" = cache ]
           [ "$BINARY_HIT" = true ]
           [ "$RUSTC_WRAPPER" = sccache ]
-          [ -z "${SCCACHE_STRICT_ERROR:-}" ]
+          echo "$SCCACHE_STRICT_ERROR"
+          [[ "$SCCACHE_STRICT_ERROR" == *"doesn't match release-sha256"* ]]
           sccache --show-stats

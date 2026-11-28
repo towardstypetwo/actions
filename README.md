@@ -95,9 +95,9 @@ Downloads a pinned release of [johnkferguson/sccache](https://github.com/johnkfe
 - Run it after Swatinem/rust-cache, whose key includes `RUSTC_WRAPPER` and which sets `CARGO_INCREMENTAL=0`. sccache can't cache incremental builds, so a job without rust-cache sets that itself.
 - `SCCACHE_BASEDIRS` is the workspace and `CARGO_HOME`, so the same crate built at a different checkout path still hits.
 - `release` is the release tag to download and `release-sha256` the SHA-256 of its `x86_64-unknown-linux-musl` tarball; change them together. The release has only a Linux X64 binary.
-- When the download, checksum or `sccache --version` fails, or on macOS and Linux ARM64 runners, or with `release: ''`, it builds the fork at `rev` with `cargo install`, which takes a few minutes, and caches the binary per commit and per version of this action. Keep `rev` on the commit the release was built from.
+- When the download, checksum or `sccache --version` fails, or on macOS and Linux ARM64 runners, or with `release: ''`, it builds the fork at `rev` with `cargo install`, which takes a few minutes, and caches the binary per commit and per version of this action. Keep `rev` on the commit the release's tag points at.
 - It runs on Linux and macOS runners; elsewhere the job builds without it.
-- With `strict: true`, a failure to get sccache running is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork pull requests and Dependabot runs are exempt from the credential check.
+- With `strict: true`, a failure to get sccache running, or to use the release, is recorded in `SCCACHE_STRICT_ERROR`, for the job to fail on after its tests. Fork pull requests and Dependabot runs are exempt from the credential check.
 
   ```yaml
   - name: Fail if strict sccache broke
