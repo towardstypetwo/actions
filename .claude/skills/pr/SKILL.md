@@ -1,18 +1,11 @@
 ---
 name: pr
-description: Write a pull request's description and its squash commit message so a reviewer can understand the change quickly. Use when opening a PR, splitting work into PRs, stacking one PR on another, updating a PR's description, or pushing to an open PR, including from a repo's own PR skill. A repo's process rules and any template for a special kind of PR take precedence.
+description: Carry a pull request from draft to ready, and write its description and squash commit message. Covers reviewing a change at the depth its kind needs, reviewing the fix commits, running scripts, CI and infra changes for real, watching CI, replying to comments and marking the PR ready. Use when opening a PR, reviewing your own PR, marking a PR ready, updating a PR's description, pushing to an open PR, splitting work into PRs or stacking one PR on another, including from a repo's own PR skill. A repo's process rules and any template for a special kind of PR take precedence.
 ---
 
-# Write a PR description
+# Pull requests
 
-The reader reviews many PRs a day across several repos and arrives cold. They don't remember plan phases, earlier PR numbers or project terms. The description's job is to protect their attention: it should give them what they need to judge the change, and nothing they would have to read and then discard.
-
-It does two things:
-
-1. **Condense the change's complexity.** It turns the diff into something quick to take in, in proportion to how complex the change is. A small script change needs a sentence or two. A change across several modules needs more: a map of where it lives, or the new interface.
-2. **Flag real risk, when there is any.** That means what could break, what would be hard to undo, or what could harm users, funds, consensus or stored data. When there is no real risk, say nothing about it.
-
-The more complex or risky a change is, the more context it gets. A change that is low on both gets the least.
+The person who reviews the PR reads many a day across several repos and arrives cold. Before the PR is marked ready, its bugs have been found and fixed, a change that only a real run can prove has been run, and its description says what the reviewer needs to judge it and nothing more.
 
 ## Defer to anything more specific
 
@@ -22,228 +15,70 @@ Read the repo's CLAUDE.md, AGENTS.md and PR skills first.
 - **PRs whose body a bot or workflow writes are out of scope,** such as dependency bumps or vendored-skill updates. Leave the generated body as it is.
 - **Templates for a special kind of PR win.** An example is an upstream merge with its own required sections. Follow that template and use this skill only for what it leaves open.
 
-## Where the squash commit message goes
+## From draft to ready
 
-GitHub copies the whole PR body into the squash commit. A `---` line splits the body: the person merging deletes everything above it, and the rest becomes the commit body.
+Work through these in order. The sections below give each step's checklist.
 
-- **One block** when the same few sentences serve both the reviewer and `git log`. The body is the commit body, and there is no `---`.
-- **Split** when review needs much more than history does: more explanation, Key Files, API Changes, Trade-offs, Risks, or Before Merging steps. Write the reader part, then a line with only `---`, then the commit body.
+1. **Prepare the change.** If the repo has a `code-naming` skill, check every name the change adds against it. Cut doc and comment text in the change to what a reader needs.
+2. **Open a draft PR.** Read [reference/description.md](reference/description.md) before writing the description or editing any PR body. To split the work into several PRs or stack one on another, read [reference/split-and-stack.md](reference/split-and-stack.md) first.
+3. **Review the whole PR once,** at the depth for its kind of change. Start right after opening the draft, without waiting for its CI.
+4. **Fix the findings you agree with.** Keep a list of the ones you decline, each with a one-line reason.
+5. **Review only the fix commits,** with the declined findings in the prompt, until a round finds nothing that is a bug. Lean laws skip this step.
+6. **Run the change for real** if it is a script, CI or infra change, or note why the run was skipped.
+7. **Reply to every review comment** that has no reply.
+8. **Watch CI** on the commit you will mark ready. A push after this, such as a fix for a comment, means watching CI again.
+9. **Mark it ready** with `gh pr ready`, then watch any checks the repo runs only on ready PRs.
 
-Below the `---` goes only the commit body. GitHub takes the commit subject from the PR title, so don't repeat the title there, in conventional commit form or any other.
+What was run, what the review changed and the findings declined go in your report to whoever asked for the work, not in the PR body. A declined finding goes in the description's Trade-offs only if the reviewer would raise it again.
 
-Risk, trade-offs and decision context always go above the `---`. The commit body says what the code does.
+## Review depth
 
-## Judge the description's size
+Pick the depth from what the change touches, not from its size. A PR that mixes kinds gets the depth of its deepest part.
 
-Judge from the diff, not the line count. Forty files of renames is simple, while thirty lines in a consensus path may not be. Scripts, CI, docs and internal tooling are usually simple even at a few hundred lines.
+- **Deep**, the default for any change with code: scripts, hooks, CI workflows, config, infrastructure, product code and tests. One full review, then the fix-commit rounds.
+- **Deep, one round:** Lean laws. One full review, and no fix-commit rounds; the Lean kernel and the axiom check cover the proofs.
+- **Standard:** docs that agents run or follow, such as skills, CLAUDE.md, AGENTS.md and READMEs with commands. Fix-commit rounds also run at this depth, with the checklist for the PR's kind.
+- **Light:** a copy of a change already reviewed elsewhere, such as the same edit rolled out to more repos.
+- **None:** prose that nobody runs or follows, such as reports and design notes. A plan gets the check its planning skill asks for instead.
 
-Default to the smallest form that works. Include what the reviewer needs to judge the change, and leave out what they would only check by reading the diff. Before adding a sentence, ask whether the reviewer would miss it.
+A finding counts when it is a bug: wrong behavior, a crash, a security hole or a broken build in plausible use. Style, wording and hardening against cases nobody will hit don't count. Each finding gives the file and line, the input or state that triggers it, and what goes wrong.
 
-Size targets, as a ceiling rather than a goal. Code blocks don't count toward them, but trim them to what matters.
+The review checks, by depth:
 
-- **One-block body:** about 60 words. A low-risk change, such as CI, scripts, config or tooling, needs only two things: what it does, and the sentence that bounds it. That is usually 2 or 3 sentences, or a lead sentence and up to 3 short bullets.
-- **Each reader section in the larger structure:** 1 to 3 sentences or bullets.
-- **The whole reader part of a large change:** about 300 words.
-- **Commit body:** at most 60 words, in at most 4 bullets of 1 or 2 lines each. This one is firm. When more feels necessary, the extra detail belongs above the `---`.
+- **Deep:**
+  - Each changed function does what its name and its callers expect, including empty, missing and error cases.
+  - Each call to an outside tool or service (`gh`, `git`, cloud CLIs, HTTP APIs) handles what it really returns: errors and where they are printed, exit codes, pagination and limits, and differences between platforms such as GNU and BSD tools.
+  - Nothing depends on the date, time zone, locale or an unset environment variable without meaning to.
+  - Tokens, secrets and permissions: least privilege, nothing secret is logged or committed, and input from a PR or user can't reach a shell unquoted.
+  - A rerun, a run in parallel or a failure partway leaves state that the next run can recover from.
+  - Tests fail when the code is wrong.
+  - The rules in the repo's CLAUDE.md or AGENTS.md and its language skill hold.
+- **Deep, Lean laws:** each law states the spec it claims, no weaker; names say the claim; types model the domain, such as an inductive rather than a `Bool`, or an `Except` that carries the reason.
+- **Standard:** each command runs as written (flags, paths, quoting); each rule agrees with the code and with the other rules; nothing a reader follows leads them to a wrong action.
+- **Light:** the copy matches the reviewed change, and each difference is one the target needs.
 
-Go over one of these only when the change truly needs it. A low-risk change never does.
+## Review the fix commits
 
-Key Files and API Changes both orient the reader, so a mid-sized change needs at most one of them. A large change across several modules, around a thousand lines or more, can carry both. In that case keep API Changes to the one or two shapes that matter most.
-
-A research, docs or design PR whose content is the point is the exception to the one-block target. Its reader part summarizes that content: the idea, what it addresses, and what the artifact shows. It then splits, with a short commit body that says what landed.
-
-When a PR removes something that was added only days earlier, such as a feature flag or a check from the week before, call it a reversal. It is not a loss of coverage or a risk.
-
-You will have read the diff closely and checked facts along the way. That does not make each fact worth a line. A first draft usually comes out twice as long as it should be, so cut it before posting.
-
-## Forms
-
-### A sentence or two
-
-For small changes. Say what the change does, with the reason folded in. A sentence that bounds the change, such as "It only reports" or "CI output is unchanged", is often the most useful thing in the body.
-
-```
-Adds a --dry-run flag to the import command, which prints the rows it
-would write and exits. Nothing is written to the database.
-```
-
-### A lead sentence and bullets
-
-For a change made of separate, parallel pieces. The lead sentence gives the outcome, and each bullet is one piece.
+After fixing the first review's findings, review only what the fixes changed:
 
 ```
-Moves the image pipeline off the deprecated resize API, so the build
-no longer warns:
-
-- thumbnails and previews use the new resize call
-- the old quality setting maps to the new compression level
-- the unused crop helper is removed
+git log -p --first-parent --no-merges <reviewed-head>..HEAD
 ```
 
-### Too long and right-sized
+`<reviewed-head>` is the commit the previous round read: the first review's for the first round, then each round's own HEAD. `--first-parent --no-merges` leaves out commits merged in from the base branch. Outside a stack, merge the base between rounds rather than rebasing; a stacked branch keeps linear history, so it is rebased. After a rebase, `<reviewed-head>` is no longer in the branch's history: run `git range-diff $(git merge-base <reviewed-head> origin/<base>)..<reviewed-head> origin/<base>..HEAD`, take the new commit it pairs with `<reviewed-head>`, and use that as `<reviewed-head>` in the `git log` range, since range-diff prints no patch for commits that are new. Put the declined findings in the prompt so the round doesn't raise them again. Fix the bugs it finds, then review the new fix commits the same way. Stop when a round finds nothing that is a bug; other findings don't start another round. A deep review always finds something, so rerunning the full review until it comes back clean never ends.
 
-The same small change, written two ways. Too long, at 110 words:
+A new full review is only for a rework the person reviewing the PR asked for.
 
-```
-The nightly backup job was failing intermittently. While investigating,
-we found the S3 upload timed out on archives over 2 GB, taking 31 to 47
-minutes against a 30-minute limit. This raises the limit to 60 minutes
-in backup.yml, renames upload_timeout to upload_timeout_minutes for
-clarity, and adds a log line with the archive size. The retry helper
-was also refactored to take its delay as an argument. Tested locally
-with a 3 GB archive: the upload finished in 41 minutes. CI passes.
+## Run it for real
 
-- backup.yml: timeout 30 -> 60
-- upload.py: renamed setting, new log line
-- retry.py: delay is now a parameter
-```
+Review reads the code but can't show how the real tool or service answers. For scripts, CI and infra, run the smallest real exercise that fits before marking the PR ready:
 
-Right-sized, at 25 words:
+- **Script:** run it once on one real input. If it writes, use its `--dry-run` or a scratch target, but only a dry-run flag its usage or source shows it has; a script that ignores unknown flags does the real writes.
+- **CI workflow:** let the PR's own run exercise it when it runs on `pull_request`; a `pull_request_target` run uses the default branch's copy, so it doesn't count. Otherwise, for a workflow that only reads or checks, run it with `gh workflow run <file> --ref <branch>`, which works only when the workflow has a `workflow_dispatch` trigger and is already on the default branch. Skip a workflow that publishes, deploys or writes to other repos, and a new one without a PR trigger.
+- **OpenTofu or Terraform:** `tofu plan` against the real backend.
+- **Hook or tool config:** trigger it once.
 
-```
-Raises the nightly backup's upload timeout from 30 to 60 minutes, so
-archives over 2 GB finish. It also logs each archive's size.
-```
-
-The cut text was:
-
-- the investigation and timings
-- the rename and the refactor, which a reviewer sees in the diff and doesn't need to judge
-- the local test and "CI passes"
-- the file list
-
-### The structure for larger changes
-
-When a change has real complexity or risk, use this structure. Every section is optional except the summary, which has no heading. Write headings in Title Case.
-
-```markdown
-<1 to 3 sentences: what the change does and the result after merge.
-Define any term a cold reader would not know.>
-
-## Why
-<1 to 3 sentences: the problem, and what goes wrong without the change.
-Link a decision record or plan rather than repeating it.>
-
-## Key Files
-<For product code spread across several modules: the few files where the
-real change is, in a fenced code block so the # lines don't render as
-headings. Each path has its own one-line # comment above it, starting
-with new: or updated:, with a blank line between entries. The note is a
-short phrase, at most about 8 words, saying what the file adds or
-changes, not how. Never one note over several listed paths. deleted: and
-renamed: are allowed but rarely belong, since Key Files lists only the
-few files where the real change is. Never the whole file list. When there
-are other files, a final # comment says what they are, e.g. callers or
-tests. Not for CI, scripts, config or docs changes; their summary
-already says where the change is.>
-
-## API Changes
-<When an interface or data shape changes in a way the reviewer should
-see: a sentence of framing, then the new shape as plain code in the
-repo's language. Mark what is new or changed with short comments, not
-diff markers. Show only the key types or signatures, not every one.>
-
-## Trade-offs
-<Only real trade-offs: a choice between alternatives where the one
-taken gives something up. Say what was chosen, what it costs, and the
-alternative. Usually one or two. Edge cases, limitations and behavior
-that resolves itself are not trade-offs; leave them out unless they are
-Risks.>
-
-## Risks
-<Only what could actually go wrong: breakage, something hard to undo,
-or harm to users, funds, consensus or stored data. Check each one
-against history before writing it; a "lost" test that never existed is
-not a risk. If you can't confirm a risk, leave it out. A limitation
-users will hit, such as a browser that isn't supported, goes here. An
-unexplained measurement from the investigation is diagnosis, not a
-risk.>
-
-## Before Merging
-<Only when the reviewer or the person merging must do something first,
-such as create an external account, set a secret, or run a check CI
-can't run. One line per step.>
-
----
-
-<commit body>
-```
-
-Key Files example:
-
-```
-# new: joins scheduler and builder reports by epoch and height
-crates/core/src/settlement_timings/ledger.rs
-
-# updated: stamps each settlement stage
-crates/core/src/execution_scheduler/settlement_scheduler.rs
-
-# updated: times checkpoint builds, minus the five waits
-crates/core/src/checkpoints/mod.rs
-
-# the rest: metric wiring, tests, plan, decision record
-```
-
-API Changes example:
-
-> Rate limits are now set per route instead of globally, so `Limiter::new` takes a route table:
-> ```rust
-> // new: one limit per route, with a default for the rest
-> pub struct RouteLimits {
->     pub default: u32,
->     pub overrides: HashMap<Route, u32>,
-> }
->
-> impl Limiter {
->     pub fn new(routes: RouteLimits) -> Self // was new(requests_per_minute: u32)
-> }
-> ```
->
-> Write the code as it reads after the change, with comments marking what is new or what it replaced. Don't use `+` and `-` lines; this is not a diff.
-
-Trade-offs example:
-
-```
-Sessions are stored in the database rather than in signed cookies, so
-they can be revoked. Each request now makes one more database read.
-```
-
-Risks example:
-
-```
-Existing exports are read with the new schema. An export written by
-the old version that has no currency column fails to load, and there
-is no migration.
-```
-
-## Leave out
-
-- How the problem was found, and the story of the work
-- Review history, fixes made in response to review, and declined suggestions (put a declined one in Trade-offs only if the reviewer would raise it again)
-- Diagnosis: timings, logs, what was measured while finding the problem
-- Tests and checks that were run, by CI or by hand. A check belongs in Before Merging only when someone still has to do it, or in Risks when a known gap remains.
-- Secondary internal changes in a low-risk PR, such as renames, refactors or helper tweaks, which the reviewer sees in the diff. Leave them out of the commit body too.
-- Test names, file lists, and restating the diff
-- Claims you could not confirm
-- Bare PR numbers, issue IDs and plan phases as context at the top. Put links in Why or at the end.
-
-## The squash commit body
-
-- **Declarative.** It states what the code does after the change, as facts: "The importer skips rows with no id." It doesn't tell a story ("X used to...", "while working on Y we found..."). Give a reason only when it isn't obvious, in at most one clause.
-- **Scaled.** For a small change, write one or two sentences, or a lead sentence and bullets. For a larger change, use at most 4 bullets of 1 or 2 lines each, or a short paragraph: about 60 words either way. Each bullet is one behavior change. The details stay in the reader part.
-- **No file paths**, unless the change is about that file, such as a new script or workflow.
-- **Plain text that reads well raw.** Use paragraphs, `- ` bullets and inline backticks. No headings, bold, links or tables: `git log` shows them as literal characters, and lines starting with `#` are deleted when git opens an editor on the message.
-- **Wrapped at 72 columns.** The subject is the PR title in conventional commit form. The body starts with its first sentence or bullet, never with the title. Keep `Closes #N` or `Part of #N` on its own line at the end.
-
-## Before posting
-
-Reread the body as the cold reviewer:
-
-- Does the first sentence say what the change does?
-- Would they miss each sentence if it were gone?
-- Is every claim checked against the diff and the repo's history?
-- Is the body within the size targets? If not, does the change truly need more?
-- Is the body longer than they need in order to judge the change with confidence? If so, cut it.
+Skip the run when it takes too long, costs real money or needs access you don't have, and say in your report why. When someone still has to run it, it goes in the description's Before Merging.
 
 ## Review, then watch CI
 
@@ -264,22 +99,35 @@ It ends with one line that says what to do next. The exit code is:
 
 In Claude Code, the review is `/code-review`, and the script is `.claude/skills/pr/scripts/watch-ci.sh`. Set the Bash tool's `timeout` to `600000` for the watch and leave `run_in_background` off; the default 2-minute limit is shorter than the watch.
 
-## Split work into PRs
+## Reply to comments
 
-Size each PR so the reviewer can read it in one sitting. The aim is throughput: never split so finely that merges slow down.
+Before marking the PR ready, and after each push to a ready PR, read its review comments:
 
-Count every added and removed line the reviewer reads, weighted the same: code, tests, scripts, config, plans and other Markdown. Lockfiles, generated files, snapshots and code merged in from upstream don't count.
+```
+gh pr view <N> --comments
+gh api --paginate repos/{owner}/{repo}/pulls/<N>/comments --jq '.[] | {id, in_reply_to_id, user: .user.login, path, line, body}'
+```
 
-- **Under 800 lines:** one PR. Don't split it for size.
-- **800 to 1,200 lines:** split when the work holds separate ideas that review well on their own.
-- **Over 1,200 lines:** split by idea. Rarely, keep it whole and give a one-line reason in the description.
+Reply to each comment that has no reply, saying what changed or why not. Write the reply to a file outside the checkout, such as a temp file, since backticks and `$` in an inline body are run by the shell:
 
-Independent pieces go off main as separate PRs. Stack only a piece that truly builds on another, within the two-level rule below. Work that would need a longer chain groups into fewer, larger PRs.
+- **Inline comment:** `gh api repos/{owner}/{repo}/pulls/<N>/comments/<root-id>/replies -F body=@<file>`. `<root-id>` is the thread's first comment: the comment's `in_reply_to_id` when it is set, else its `id`. GitHub doesn't accept a reply to a reply.
+- **Conversation comment or review summary:** `gh pr comment <N> --body-file <file>`.
 
-## Stacking a PR on another
+A comment that needs a person's decision, such as on design, scope or protocol behavior, gets the options as its reply and stays open.
 
-Stack at most two levels: one unmerged PR and one on top of it. Stack only on a PR that has finished its code reviews and been marked ready (not a draft), so its branch rarely changes.
+## How each agent does it
 
-- **Create the stack with `gh stack`** (`gh extension install github/gh-stack`). Open the upper PR, then link the pair with `gh stack link <lower-pr> <upper-pr>`, which also sets the upper PR's base. When the lower PR merges, GitHub rebases the upper branch onto main and retargets it. That force-pushes the branch, so run `git pull --rebase` before committing to it again.
-- **When GitHub doesn't**, because the PR isn't in a GitHub stack or the rebase conflicts: if it is still in a stack, remove it with `gh stack unstack <stack-number>`, since stacks require linear history. Then merge main into the upper branch (merge, not rebase), push, and retarget it with `gh pr edit <upper-pr> --base main` if its base hasn't moved yet.
-- **Merge a stacked PR from its merge box or with `gh stack merge <pr> --squash`.** Merging the upper PR also merges the lower one. `gh pr merge` can't merge a stacked PR, auto-merge isn't available, and the squash message can't be edited, so delete the part above `---` from the PR body before merging.
+### Claude Code
+
+- The skill is at `.claude/skills/pr/`.
+- Run the first review as `/code-review <level> <PR>`: deep is `xhigh`, standard `high` and light `medium`. It runs on the session's model.
+- Run each fix-commit round in a sub-agent (the Agent tool) at effort `high`, with the `git log` range above, the checklist for the PR's kind and the declined findings in its prompt.
+
+### Gemini CLI, and agents without a review command
+
+Any agent without a review command, such as Codex, Cursor or Copilot, follows the review bullets here.
+
+- Gemini loads `.agents/skills/pr/SKILL.md` without any setup, and parses only the `name` and `description` frontmatter fields. Activating the skill asks for consent; a headless run (`gemini -p`) needs `--approval-mode=yolo` or a policy that allows `activate_skill` and shell commands, or it can't load the skill or run `git`.
+- There's no second reviewer. Review your own PR in one pass with the checklist for its depth, over `gh pr diff <N>`, then over each round's fix commits with the `git log` range above and the declined findings in mind. Write every finding down before fixing any of them, so the pass reads the whole diff first.
+- The `code-review` extension can't take a depth or a commit range; use the checklist pass instead.
+- Watch CI with `bash .agents/skills/pr/scripts/watch-ci.sh`, passing `--minutes N` below the shell tool's time limit if it has one.
