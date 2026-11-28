@@ -195,7 +195,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Make the bucket
-        run: curl -fsS --retry 5 --retry-connrefused -X PUT http://localhost:5000/tt2-builds
+        # The moto container can refuse or reset connections while it starts.
+        run: >-
+          curl -fsS --max-time 10 --retry 30 --retry-all-errors
+          --retry-delay 2 --retry-max-time 60
+          -X PUT http://localhost:5000/tt2-builds
       - id: setup
         uses: $/sccache-setup
         with:
@@ -246,7 +250,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Make the bucket
-        run: curl -fsS --retry 5 --retry-connrefused -X PUT http://localhost:5000/tt2-builds
+        # The moto container can refuse or reset connections while it starts.
+        run: >-
+          curl -fsS --max-time 10 --retry 30 --retry-all-errors
+          --retry-delay 2 --retry-max-time 60
+          -X PUT http://localhost:5000/tt2-builds
       - id: setup
         uses: $/sccache-setup
         with:
@@ -286,7 +294,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Make the bucket
-        run: curl -fsS --retry 5 --retry-connrefused -X PUT http://localhost:5000/tt2-builds
+        # The moto container can refuse or reset connections while it starts.
+        run: >-
+          curl -fsS --max-time 10 --retry 30 --retry-all-errors
+          --retry-delay 2 --retry-max-time 60
+          -X PUT http://localhost:5000/tt2-builds
       - id: setup
         uses: $/sccache-setup
         with:
